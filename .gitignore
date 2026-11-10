@@ -1,0 +1,8 @@
+# Never commit vendor firmware binaries or updater executables
+*.bin
+*.hex
+*.exe
+*.dll
+*.zip
+__pycache__/
+*.pyc
