@@ -1,0 +1,39 @@
+# Glorious Forge Series One Pro Wireless (CM2852-BAMF) — Board Default Config
+# SPDX-License-Identifier: MIT
+# SoC selection comes from Kconfig.glorious_series_one_pro (HWMv2). The NFC pins
+# (P0.09/P0.10 side buttons) are released by &uicr nfct-pins-as-gpios in the .dts.
+
+CONFIG_ARM_MPU=y
+CONFIG_HW_STACK_PROTECTION=y
+
+# Link at 0x00006000 behind the 24 KB Compx USB HID bootloader (258a:2103):
+# FLASH_LOAD_OFFSET/SIZE come from the chosen zephyr,code-partition.
+CONFIG_USE_DT_CODE_PARTITION=y
+
+# Clocks, GPIO, SPI, and 1 ms (1,000 Hz) USB HID polling
+CONFIG_CLOCK_CONTROL_NRF_K32SRC_XTAL=y
+CONFIG_GPIO=y
+CONFIG_SPI=y
+CONFIG_INPUT=y
+CONFIG_ZMK_POINTING=y
+CONFIG_ZMK_USB=y
+CONFIG_USB_DEVICE_VID=0x258A
+CONFIG_USB_DEVICE_PID=0x2018
+CONFIG_USB_DEVICE_MANUFACTURER="Glorious"
+CONFIG_USB_DEVICE_PRODUCT="Series One PRO"
+CONFIG_USB_HID_POLL_INTERVAL_MS=1
+
+# Sensor (P0.26) and LED (P0.14) power enables are regulator-fixed nodes with regulator-boot-on
+CONFIG_REGULATOR=y
+
+# Scroll wheel (alps,ec11 on P0.29/P0.02)
+CONFIG_SENSOR=y
+CONFIG_EC11_TRIGGER_GLOBAL_THREAD=y
+
+# Persistent settings in the dedicated 0x0007E000..0x0007FFFF partition
+CONFIG_FLASH=y
+CONFIG_FLASH_PAGE_LAYOUT=y
+CONFIG_FLASH_MAP=y
+CONFIG_NVS=y
+CONFIG_SETTINGS=y
+CONFIG_SETTINGS_NVS=y

@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MIT
+
+if BOARD_GLORIOUS_SERIES_ONE_PRO
+
+config ZMK_KEYBOARD_NAME
+    default "Series One PRO"
+
+if USB
+
+config USB_NRFX
+    default y
+
+config USB_DEVICE_STACK
+    default y
+
+endif # USB
+
+endif # BOARD_GLORIOUS_SERIES_ONE_PRO

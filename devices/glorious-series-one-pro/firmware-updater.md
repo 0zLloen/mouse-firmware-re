@@ -41,7 +41,7 @@ All official installers, manifests, and firmware archives were inspected offline
 
 ### 3.1 Are Firmware Images Encrypted, Signed, Compressed, or Checksummed?
 
-- **Encryption**: **NO.** Only trivial single-byte XOR (`^ 0x55`) obfuscation is used on `.hex` data records (`00`).
+- **Encryption**: **NO.** The `.hex` files are plain Intel HEX. The only obfuscation is a single-byte XOR (`^ 0x55`) applied to `Program`/`VerifyByAddress` payloads on the USB wire.
 - **Cryptographic Signature**: **NO.** Neither `FirmwareUpdate.exe`, the `.hex` files, nor the bootloader performs RSA, ECDSA, Ed25519, or HMAC signature verification.
 - **Compression**: **NO** on-chip compression. The `.hex` files unpack directly to raw ARM Cortex-M4F Thumb-2 machine code (`mouse_fw.bin` = `93,328` bytes; `receiver_fw.bin` = `45,120` bytes).
 - **Checksums / Validation**:
@@ -55,31 +55,34 @@ All official installers, manifests, and firmware archives were inspected offline
     - Extended Linear Address (`04`): `0x0000`
     - Start of Data (`00`): **`0x00006000`**
     - End of Data (`00`): **`0x0001CC8F`** (`93,328` bytes = `0x16C90` bytes)
-    - Entry Point (`05` Start Linear Address): **`0x00006201`** (Keil `__main` scatter-loader; Vector Table `Reset_Handler` at `0x00006004` is `0x00006985` `SystemInit` + `__main`).
-    - The resident **24 KB Compx USB HID Bootloader at `0x00000000`–`0x00005FFF` is NEVER erased or modified** during an update.
+    - Entry Point (`05` Start Linear Address): **`0x00006201`** (Keil `__main` scatter-loader; the vector table's `Reset_Handler` word at `0x00006004` is `0x000063DD`).
+    - The update data starts at `0x00006000`, so `Program` never writes the resident **24 KB Compx USB HID Bootloader at `0x00000000`–`0x00005FFF`** (Inferred: the `Erase` extent is not known).
   - **Wireless Receiver (`CM2856_Receiver_USB_v1.00.00_20220810.hex`)**:
     - Start of Data (`00`): **`0x00007000`**
     - End of Data (`00`): **`0x0001203F`** (`45,120` bytes = `0xB040` bytes)
     - Entry Point (`05` Start Linear Address): **`0x00007201`** (`Reset_Handler` at `0x00007004` is `0x000073BD`).
-    - The resident **28 KB Receiver Bootloader at `0x00000000`–`0x00006FFF` is NEVER erased or modified** during an update.
+    - The update data starts at `0x00007000`, so `Program` never writes the resident **28 KB Receiver Bootloader at `0x00000000`–`0x00006FFF`** (Inferred, as above).
 
-### 3.3 Complete Mouse Flash & SRAM Map (Verified from Firmware Disassembly)
+### 3.3 Mouse Flash & SRAM Map (Inferred from Firmware Disassembly)
 
 Disassembly of `0x0000BD80`–`0x0000BF30` (flash page erase/write wrapper) and `0x00014500`–`0x00014AD0` (`Source\usb_protocol.c`) reveals the exact flash and SRAM partitioning:
 
 | Address Range | Size | Purpose | Evidence Reference |
 | :--- | :--- | :--- | :--- |
-| `0x00000000` – `0x00005FFF` | `24 KB` | **Compx Resident USB HID Bootloader (`258a:2103`)** | Preserved by `Erase` (`0x01`); app starts at `0x00006000` |
-| `0x00006000` – `0x0001CC8F` | `93.3 KB` | **Mouse Application Firmware (`CM2856_Mouse_USB`)** | Vector table at `0x00006000` (`Initial_SP = 0x2000B370`) |
-| `0x0001CC90` – `0x00087FFF` | `428.8 KB` | Unused / Free Application Flash (available for custom firmware growth) | Blank (`0xFF`) |
+| `0x00000000` – `0x00005FFF` | `24 KiB` | **Compx Resident USB HID Bootloader (`258a:2103`)** | App `.hex` starts at `0x00006000`; never programmed by the updater |
+| `0x00006000` – `0x0001CC8F` | `91.1 KiB` (`93,328 B`) | **Mouse Application Firmware (`CM2856_Mouse_USB`)** | Vector table at `0x00006000` (`Initial_SP = 0x2000AF50`) |
+| `0x0001CC90` – `0x0007DFFF` | `388.9 KiB` | Unused application flash, available for custom firmware growth | Not in the `.hex` (`0xFF` after `Erase`) |
+| `0x0007E000` – `0x0007FFFF` | `8 KiB` | Reserved for custom-firmware settings (not used by stock) | Repository convention |
+| `0x00080000` – `0x00087FFF` | `32 KiB` | Guard band, unused by stock as far as the disassembly shows | — |
 | `0x00088000` – `0x00088FFF` | `4 KB` | **System Config Page `0x88`** (`32` bytes + CRC-16 at `+0x1E`, factory/RF pairing data) | Read/written at `0x14700`–`0x14770` (`page 0x88`) |
 | `0x0008B000` – `0x0008BFFF` | `4 KB` | **Active Profile Config Page `0x8B`** (`0x266` = `614` bytes, CRC-16 at `+0x264`, factory defaults at `0x0001A3B8`) | Read/written at `0x14668`–`0x146B4` (`page 0x8B`) |
 | `0x0008C000` – `0x0008CFFF` | `4 KB` | **Extended Config Page `0x8C`** (`0x4CB` = `1227` bytes, CRC-16 at `+0x4C9`) | Read/written at `0x146B8`–`0x14700` (`page 0x8C`) |
 | `0x00090000` – `0x000DFFFF` | `320 KB` | **Per-Button Macro & Profile Pages (`0x90..0xDF`)** | Erased/written by HID commands `0x07`–`0x09` |
-| `0x20000000` – `0x2003FFFB` | `~256 KB` | Application SRAM (`RW`/`ZI` + Heap + Stack) | Keil scatter map at `0x0001AAE4` |
+| `0x20000000` – `0x2000AF4F` | `~43.8 KiB` | Stock `RW`/`ZI` + stack (initial SP `0x2000AF50`; exact `RW`/`ZI` extent not measured) | Keil scatter map at `0x0001AAE4` |
+| `0x2000AF50` – `0x2003FFFB` | `~212 KiB` | Not used by stock as far as the scatter map shows (open-directional-dpi keeps its state at `0x2003F000` on that assumption) | Inferred |
 | **`0x2003FFFC` – `0x2003FFFF`** | **`4 Bytes`** | **Bootloader Entry Magic Word (`0xA55AA55A`)** | Written at `0x00014836` before `NVIC_SystemReset()` |
 
-> **Critical Preservation Rule**: Flash pages `0x00088000` (`page 0x88`), `0x0008B000` (`page 0x8B`), and `0x0008C000` (`page 0x8C`) store radio pairing and calibration/profile structures. Custom firmware must keep its code/rodata below `0x00080000` (giving `488 KB` of space between `0x00006000` and `0x00080000`) and store its own non-volatile settings in a dedicated page such as `0x0007E000`–`0x0007FFFF` so stock calibration and pairing data at `0x00088000` are never overwritten!
+> **Preservation Rule**: Flash pages `0x00088000` (`page 0x88`), `0x0008B000` (`page 0x8B`), and `0x0008C000` (`page 0x8C`) store radio pairing and calibration/profile structures. Custom firmware keeps its code/rodata in `0x00006000`–`0x0007DFFF` (`480 KiB`) and its own settings in `0x0007E000`–`0x0007FFFF`, so `Program` never writes the stock pages at `0x00088000`+. Whether the bootloader's `Erase` leaves them intact is **Unknown** (see 4.2).
 
 ---
 
@@ -91,7 +94,9 @@ In Windows HID / Linux `hidraw` / WebHID, the buffer passed to `HidD_SetFeature`
 
 ### 4.1 Step 1 — Switching from Application Mode to Bootloader Mode
 
-Decompilation of `C52840Dongle::SetBLDeviceMode` (`FirmwareUpdate.exe`) and disassembly of the stock firmware's USB Feature report dispatcher (`0x0001451C`–`0x00014AD0`) prove two ways the stock firmware enters the bootloader:
+> **Unknown — exact packet.** The layout below conflicts with the one `platforms/compx-nrf52/tools/compx_usb_flasher.py` sends (`feat[3] = 0x02`, `feat[6] = 0xB0`, rest `0x00`, i.e. `buf[4] = 0x02`, `buf[7] = 0xB0`). Neither has been re-checked against the `FirmwareUpdate.exe` decompilation or tried on hardware. `bootloader-protocol.md` lists both; until one is confirmed, enter the bootloader with the official updater.
+
+Notes from the decompilation of `C52840Dongle::SetBLDeviceMode` (`FirmwareUpdate.exe`) and disassembly of the stock firmware's USB Feature report dispatcher (`0x0001451C`–`0x00014AD0`) suggest two ways the stock firmware enters the bootloader (Inferred):
 
 1. **Via Bootloader Subcommand (`buf[7] == 0xB0`, dispatched at `0x00014548`)**:
    - `FirmwareUpdate.exe` sends `SetFeature` (65 bytes):
@@ -121,7 +126,7 @@ Once enumerated as `258a:2103` (Wired Mouse Bootloader) or `258a:2113` (Wireless
 | Command Name | `buf[3]` | `buf[4]` (Len) | `buf[5]` | `buf[6]` (Cmd) | `buf[7..11]` | `buf[12..64]` | Response / Behavior |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **`GetBLFW`** | `0x00` | `0x06` | `0xB0` | `0x80` | `0x00..` | `0x00..` | `GetFeature` returns `resp[1] == 0xA1` (OK) and 4-byte BL version at `resp[9..12]` (must contain `0xB0`). |
-| **`Erase`** | `0x00` | `0x08` | `0xB0` | `0x01` | `0x00..` | `0x00..` | Erases application flash (`0x00006000`+ on mouse, `0x00007000`+ on receiver). Does **not** touch bootloader (`0x0000..0x5FFF`). |
+| **`Erase`** | `0x00` | `0x08` | `0xB0` | `0x01` | `0x00..` | `0x00..` | Erases application flash starting at `0x00006000` (mouse) / `0x00007000` (receiver). The upper bound is **Unknown**: it may include `0x7E000` and the `0x88000`+ pairing/profile pages. |
 | **`Program`** | `0x00` | `len + 5` | `0xB0` | `0x02` | `buf[7] = len` (`<= 32`)<br>`buf[8..11] = addr` (Big-Endian `uint32`) | Up to 32 bytes of `data ^ 0x55` (`buf[12 .. 12+len-1]`) | Bootloader XORs each byte with `0x55` and writes to `addr`. Host sleeps `10 ms` every `4096` (`0x1000`) bytes. |
 | **`VerifyByAddress`** | `0x00` | `0x20` | `0xB0` | `0x83` | `buf[7] = len` (`<= 32`)<br>`buf[8..11] = addr` (Big-Endian `uint32`) | `0x00..` | `GetFeature` returns `resp[1] == 0xA1` and `len` bytes at `resp[12 .. 12+len-1]` (XORed with `0x55`). |
 | **`Exit`** | `0x00` | `0x01` | `0xB0` | `0x04` | `buf[7] = mode` (`0x01` = boot app) | `0x00..` | Marks application valid and resets into application (`0x00006000`). |
@@ -146,12 +151,13 @@ Decompilation of `Form1::InitDevice()` and `Form1::StartUpdateThread()` shows:
 
 ## 5. Conclusion: Can the Official Updater Safely Install Custom Firmware?
 
-**YES — with high confidence and full software recoverability, provided three strict engineering rules are followed:**
+**Probably (Inferred; not yet tried on hardware), provided three rules are followed:**
 
-1. **No Cryptographic Lockout**: Because the Compx bootloader (`258a:2103`) performs **zero cryptographic signature verification** and only XORs incoming payload bytes with `0x55`, any valid ARM Cortex-M4F binary linked at **`0x00006000`** and packaged as an XOR-`0x55` Intel HEX file (`CM2856_Mouse_USB_v1.00.00_20220810.hex`) will be accepted, programmed, verified, and booted by the unmodified stock bootloader.
-2. **Resident Bootloader Preservation**: The `Erase` (`0x01`) and `Program` (`0x02`) commands only operate on application flash (`>= 0x00006000`). The 24 KB bootloader at `0x00000000`–`0x00005FFF` remains untouched in flash.
+1. **No Cryptographic Lockout**: Neither `FirmwareUpdate.exe` nor the protocol shows any signature check; the payload is only XORed with `0x55` on the USB wire. A valid ARM Cortex-M4F image linked at **`0x00006000`** and packaged as a plain Intel HEX file (like `CM2856_Mouse_USB_v1.00.00_20220810.hex`) should be accepted, programmed, verified and booted by the stock bootloader.
+2. **Resident Bootloader Preservation**: `Program` (`0x02`) writes start at the application base (`>= 0x00006000`), so the 24 KB bootloader at `0x00000000`–`0x00005FFF` is not written. The `Erase` (`0x01`) upper bound is Unknown, so settings and pairing pages may not survive.
 3. **Mandatory Bootloader Re-Entry Mechanism in Custom Firmware**:
    - Because the bootloader normally jumps straight to `0x00006000` when a valid application header/vector table is present unless `*(volatile uint32_t *)0x2003FFFC == 0xA55AA55A`, **any custom firmware flashed via USB MUST include**:
      1. **Boot-Chord Hardware Fallback**: On startup (inside `SYS_INIT(PRE_KERNEL_1)` before initializing USB or sensors), sample the physical Left + Right + DPI buttons (`P1.15`, `P1.13`, `P1.00`). If held low at power-on/reset, immediately write `0xA55AA55A` to `*(volatile uint32_t *)0x2003FFFC` and call `NVIC_SystemReset()`.
-     2. **USB HID Bootloader Command Support**: Handle Feature report `buf[7] == 0xB0` / `buf[6] == 0x03` by writing `0xA55AA55A` to `0x2003FFFC` and resetting.
-   - With both mechanisms present, even if USB descriptors or sensor code have a bug, holding Left+Right+DPI while plugging in the USB cable forces the mouse back into `258a:2103` bootloader mode, allowing immediate restoration of the stock `CM2856_Mouse_USB_v1.00.00_20220810.hex` firmware.
+     2. **Runtime re-entry**: a button combo or a USB command that writes `0xA55AA55A` to `0x2003FFFC` and resets. The ZMK board uses a Left+Right+DPI combo (`&compx_bl`); a USB Feature-report command would need the (still Unknown) stock entry packet and a vendor HID interface.
+   - The boot chord is sampled only when the MCU comes out of reset. Plugging in USB does **not** reset a running, battery-powered mouse (VBUS only wakes it from System OFF). To use it: disconnect the battery (or let the mouse fully power down), hold Left+Right+DPI, then connect USB.
+   - Once the mouse enumerates as `258a:2103`, restore stock firmware with `python3 platforms/compx-nrf52/tools/compx_usb_flasher.py flash --firmware-hex CM2856_Mouse_USB_v1.00.00_20220810.hex`.

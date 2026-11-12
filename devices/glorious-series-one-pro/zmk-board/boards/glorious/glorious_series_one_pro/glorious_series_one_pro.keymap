@@ -1,0 +1,36 @@
+/*
+ * Default keymap. Pressing Left + Right + DPI together reboots into the Compx USB
+ * bootloader (258a:2103), the same chord bootloader_reentry.c samples at boot.
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/pointing.h>
+
+/ {
+    combos {
+        compatible = "zmk,combos";
+        compx_bootloader {
+            timeout-ms = <200>;
+            key-positions = <0 1 5>;
+            bindings = <&compx_bl>;
+        };
+    };
+
+    scroll_encoder: scroll_encoder {
+        compatible = "zmk,behavior-sensor-rotate";
+        #sensor-binding-cells = <0>;
+        bindings = <&msc SCRL_DOWN>, <&msc SCRL_UP>;
+        tap-ms = <30>;
+    };
+
+    keymap {
+        compatible = "zmk,keymap";
+        default_layer {
+            /*        Left        Right       Middle      Back        Forward     DPI */
+            bindings = <&mkp LCLK &mkp RCLK &mkp MCLK &mkp MB4 &mkp MB5 &none>;
+            sensor-bindings = <&scroll_encoder>;
+        };
+    };
+};

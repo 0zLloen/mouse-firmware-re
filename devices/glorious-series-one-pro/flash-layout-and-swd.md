@@ -14,14 +14,14 @@ This document evaluates hardware-level Serial Wire Debug (SWD) programming and r
 
 ## 2. nRF52840-QIAA-D0 SWD Signals & PCB Test Point Analysis
 
-### 2.1 MCU Package & Silicon Revision (Verified from FCC Teardown Photos)
+### 2.1 MCU Package & Silicon Revision (marking Verified from FCC photos; ball assignments from the nRF52840 aQFN73 pinout)
 
-- **Package**: **nRF52840-QIAA-D0** (`N52840 QIAAD0 2144MX`, 73-pin aQFN `7x7 mm`, manufactured week 44 of 2021, Silicon Revision **Engineering D / Rev 2**, `HWID = 0x015B`).
+- **Package**: **nRF52840-QIAA-D0** (`N52840 QIAAD0 2144MX`, 73-pin aQFN `7x7 mm`, manufactured week 44 of 2021; build code **D0 = production Revision 2**).
 - **Physical SWD Pins on nRF52840-QIAA**:
-  - **`SWDIO`**: Dedicated pin **`G1`** (bottom-right corner region of the aQFN-73 outer/inner row)
-  - **`SWDCLK`**: Dedicated pin **`F2`** (adjacent to `G1`)
+  - **`SWDIO`**: dedicated ball **`AC24`**
+  - **`SWDCLK`**: dedicated ball **`AA24`**
   - **`nRESET`**: Shared with **`P0.18`** (pin **`AC13`**, configurable via `UICR.PSELRESET[0..1]` at `0x10001200`–`0x10001204`)
-  - **`VDD`**: `3.0 V – 3.3 V` regulated rail (`VDD` pins `A22, B1, AD2, AD23, W1`)
+  - **`VDD`**: `3.0 V – 3.3 V` regulated rail (`VDD` balls `A22, AD14, AD23, B1, W1`; `AD2` is `VBUS`, 5 V)
   - **`GND`**: Exposed center thermal pad (`VSS`) + battery negative (`B-` black wire on `J1`)
 
 ### 2.2 PCB Test Pads on `CM2852-BAMF` (Classified Evidence)
@@ -30,7 +30,7 @@ Inspection of the FCC internal photographs (`https://fccid.io/2AXP2SP22`) for th
 
 | Signal | PCB Location / Pad Candidate | Evidence Classification | Verification Method Required Before Connecting |
 | :--- | :--- | :--- | :--- |
-| **`GND`** | Battery connector `J1` Pin 1 (Black wire), USB-C shield tabs, exposed copper ground ring | **Verified** | Confirm `0.0 Ohm` continuity to USB-C shell |
+| **`GND`** | Battery connector `J1` Pin 1 (Black wire), USB-C shield tabs, exposed copper ground ring | **Inferred** | Confirm `0.0 Ohm` continuity to USB-C shell |
 | **`VDD` (`VREF`)** | Regulated `3.0V–3.3V` rail on decoupling capacitors adjacent to `U1` (`nRF52840`) | **Inferred** | Measure with DMM while powered (`~3.0V–3.3V` DC); **do not** use raw `VBUS` (`5.0V`) or `VBAT` (`3.7–4.2V`) as `VTref` unless debugger supports level shifting |
 | **`SWDIO` & `SWDCLK`** | Cluster of 4 unpopulated round copper test pads on the bottom/top layer near `U1` (adjacent to `Y2` 32 MHz crystal and the programming header footprint used at the Compx factory) | **Inferred (Unconfirmed Pad Order)** | **Unknown exact pad-to-signal ordering** until verified via passive DMM continuity/diode check or high-resolution multimeter probe |
 
@@ -40,10 +40,10 @@ Inspection of the FCC internal photographs (`https://fccid.io/2AXP2SP22`) for th
 
 ## 3. Nordic `APPROTECT` (Readback Protection) & Silicon Revision Analysis
 
-### 3.1 `N52840 QIAAD0` (`Rev 2`) vs. `QIAAB0` / `QIAA-F0` (`Rev 3`)
+### 3.1 `N52840 QIAAD0` (Revision 2) vs. `QIAA-F0` (Revision 3)
 
 1. **Silicon Revision Behavior**:
-   - `QIAAD0` is Nordic nRF52840 **Revision 2** (`Engineering D`), built prior to the late-2021 `QIAA-F0` (`Rev 3`) hardware+software `APPROTECT` redesign.
+   - `QIAAD0` is Nordic nRF52840 production **Revision 2**, built prior to the late-2021 `QIAA-F0` (`Rev 3`) hardware+software `APPROTECT` redesign.
    - On `QIAAD0`, access port protection is controlled solely by `NRF_UICR->APPROTECT` (`0x10001208`):
      - `0xFFFFFFFF`: **Unprotected (`Disabled`)** — full non-destructive SWD read/write access to all flash (`0x00000000`–`0x000FFFFF`), RAM (`0x20000000`–`0x2003FFFF`), and UICR (`0x10001000`–`0x10001FFF`) is immediately available!
      - `0x00000000` (or `!= 0xFF`): **Protected (`Enabled`)** — the AHB-AP (`AP[0]`) is disabled at boot, while the Nordic Control Access Port (`CTRL-AP`, `AP[1]`) remains accessible.
@@ -66,11 +66,11 @@ Inspection of the FCC internal photographs (`https://fccid.io/2AXP2SP22`) for th
            | USB VID:PID = 258a:2103                               |
            | Checks *(uint32_t *)0x2003FFFC == 0xA55AA55A at boot  |
 0x00006000 +-------------------------------------------------------+
-           | Application Firmware Region (488 KB safe window)      |
+           | Application Firmware Region (480 KiB, ..0x0007DFFF)   |
            | Stock CM2856_Mouse_USB occupies 0x00006000..0x0001CC8F|
            | Custom ZMK / Patched FW links at 0x00006000           |
 0x0007E000 +-------------------------------------------------------+
-           | Custom NVS / Extension Storage (8 KB)                 |
+           | Custom NVS / Extension Storage (8 KiB)                |
            | Dedicated flash pages 0x7E..0x7F (never touches stock)|
 0x00080000 +-------------------------------------------------------+
            | Reserved Guard Band (32 KB)                           |
@@ -110,7 +110,7 @@ If you choose to inspect the PCB with an SWD debugger (e.g., SEGGER J-Link, CMSI
 2. Set a digital multimeter (DMM) to continuity/resistance mode.
 3. Verify `GND` between the USB-C outer shield and `J1` Pin 1 (black wire).
 4. Locate the 4 unpopulated test pads near `U1` (`nRF52840-QIAA-D0`). Check which pad has `0.0 Ohm` continuity to `GND`.
-5. Measure resistance from the remaining test pads to `P0.18` (`nRESET`, pin `AC13`). Note that `SWDIO` (`G1`) and `SWDCLK` (`F2`) are dedicated debug pins and will show high impedance (`> 1 MOhm`) to `GND` and a standard ESD diode drop (`~0.55V–0.65V` in diode mode with red probe on `GND`).
+5. Measure resistance from the remaining test pads to `P0.18` (`nRESET`, pin `AC13`). Note that `SWDIO` (`AC24`) and `SWDCLK` (`AA24`) are dedicated debug pins and will show high impedance (`> 1 MOhm`) to `GND` and a standard ESD diode drop (`~0.55V–0.65V` in diode mode with red probe on `GND`).
 
 ### Step 2 — Read-Only `APPROTECTSTATUS` Check (Zero Flash Modification)
 Connect only `GND`, `VTref` (`3.3V` regulated rail), `SWDIO`, and `SWDCLK` to a CMSIS-DAP or J-Link probe and run OpenOCD in **passive DAP inquiry mode** (never pass `nrf52_recover`!):
@@ -128,4 +128,4 @@ openocd -f interface/cmsis-dap.cfg -c "transport select swd; adapter speed 1000;
     ```
   - **`0x00000000`**: **Readback-protected (`APPROTECT` enabled in UICR).**
     - **DO NOT run `nrf52_recover` or `nrfjprog --recover`!** Unlocking via CTRL-AP `ERASEALL` would erase the 24 KB bootloader (`0x00000000`–`0x00005FFF`) and RF pairing page (`0x00088000`).
-    - Instead, use the **USB HID Bootloader (`258a:2103`)** path documented in `flashing-feasibility.md`, which flashes `0x00006000`+ over USB without touching the bootloader or pairing data!
+    - Instead, use the **USB HID Bootloader (`258a:2103`)** path documented in `flashing-feasibility.md`. It only programs `0x00006000`+, so the bootloader is never written; whether its `Erase` clears the pairing page is Unknown.

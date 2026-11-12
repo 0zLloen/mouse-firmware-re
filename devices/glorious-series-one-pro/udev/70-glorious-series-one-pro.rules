@@ -1,0 +1,11 @@
+# Glorious Forge Series One Pro Wireless: hidraw access for the logged-in desktop user.
+# Numbered below 73 so systemd-logind's uaccess handling (71-/73-seat*.rules) sees the tag.
+#   258a:2018 wired mouse application      258a:2103 wired mouse Compx bootloader
+#   258a:2031 2.4 GHz receiver application 258a:2113 receiver Compx bootloader
+# The tools only use hidraw, so raw /dev/bus/usb nodes keep their default permissions.
+# Install: sudo cp 70-glorious-series-one-pro.rules /etc/udev/rules.d/ && sudo udevadm control --reload
+
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="258a", ATTRS{idProduct}=="2018", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="258a", ATTRS{idProduct}=="2103", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="258a", ATTRS{idProduct}=="2031", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="258a", ATTRS{idProduct}=="2113", TAG+="uaccess"

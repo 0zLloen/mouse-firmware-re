@@ -1,8 +1,12 @@
 /*
  * Glorious Forge Series One Pro Wireless (CM2852-BAMF) — ZMK / Zephyr Board Devicetree
  *
- * All GPIO pins, SPI2 sensor bus, flash partitions, and bootloader magic RAM
- * reservation verified directly from CM2856_Mouse_USB_v1.00.00_20220810.hex.
+ * GPIO pins, SPI2 sensor bus and flash layout are Inferred from disassembly of
+ * CM2856_Mouse_USB_v1.00.00_20220810.hex; nothing here has run on hardware.
+ *
+ * Blocker: no Zephyr/ZMK driver exists for the PAW3370 / BAMF sensor, so the sensor
+ * node and its input listener are disabled. The image builds and handles buttons,
+ * wheel and bootloader re-entry, but does not track motion.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -23,18 +27,15 @@
         zmk,kscan = &kscan0;
     };
 
-    /*
-     * Reserve top 16 bytes of 256 KB SRAM (0x2003FFF0..0x2003FFFF) so the
-     * Compx USB HID Bootloader magic word at 0x2003FFFC (0xA55AA55A) is
-     * never overwritten by stack or heap allocations.
-     */
-    sram@2003FFF0 {
-        compatible = "zephyr,memory-region";
-        reg = <0x2003FFF0 0x00000010>;
-        zephyr,memory-region = "BOOTLOADER_MAGIC_RAM";
+    /* Left + Right + DPI combo in the keymap; see bootloader_reentry.c */
+    behaviors {
+        compx_bl: compx_bootloader {
+            compatible = "glorious,behavior-compx-bootloader";
+            #binding-cells = <0>;
+        };
     };
 
-    /* Direct GPIO Mouse Buttons (Verified from 0x0000C5B8 & 0x00016B3C) */
+    /* Direct GPIO Mouse Buttons (Inferred from 0x0000C5B8 & 0x00016B3C) */
     kscan0: kscan {
         compatible = "zmk,kscan-gpio-direct";
         wakeup-source;
@@ -48,7 +49,7 @@
             ;
     };
 
-    /* Scroll Wheel Quadrature Encoder (Verified from 0x0000C5F8 & 0x00016CB2) */
+    /* Scroll Wheel Quadrature Encoder (Inferred from 0x0000C5F8 & 0x00016CB2) */
     wheel_encoder: encoder_wheel {
         compatible = "alps,ec11";
         a-gpios = <&gpio0 29 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>;
@@ -57,7 +58,13 @@
         status = "okay";
     };
 
-    /* Peripheral Power Rail Enables (Verified from 0x0000C61A & 0x0000C636) */
+    sensors: sensors {
+        compatible = "zmk,keymap-sensors";
+        sensors = <&wheel_encoder>;
+        triggers-per-rotation = <24>;
+    };
+
+    /* Peripheral Power Rail Enables (Inferred from 0x0000C61A & 0x0000C636; polarity unconfirmed) */
     sensor_pwr: regulator-sensor-pwr {
         compatible = "regulator-fixed";
         regulator-name = "sensor-pwr-en";
@@ -72,21 +79,17 @@
         regulator-boot-on;
     };
 
-    /* Input Listener for PAW3370 sensor */
+    /* Enable together with paw3370_bamf once a driver exists */
     mouse_input_listener {
         compatible = "zmk,input-listener";
         device = <&paw3370_bamf>;
+        status = "disabled";
     };
-};
-
-/* Reserve 0x2003FFF0..0x2003FFFF outside main Zephyr SRAM */
-&sram0 {
-    reg = <0x20000000 0x0003FFF0>;
 };
 
 /* P0.09 and P0.10 are used for Side Buttons 4 & 5, not NFC antenna */
 &uicr {
-    nfcpins-as-gpios;
+    nfct-pins-as-gpios;
 };
 
 &gpio0 {
@@ -103,7 +106,7 @@
 
 /*
  * SPI2 Bus for Glorious BAMF / PixArt PAW3370 Optical Sensor
- * Verified from 0x000184C8..0x0001855C:
+ * Inferred from stock firmware 0x000184C8..0x0001855C:
  *   CSN  = P0.04
  *   SCK  = P0.12
  *   MISO = P0.11
@@ -138,8 +141,10 @@
     pinctrl-names = "default", "sleep";
     cs-gpios = <&gpio0 4 GPIO_ACTIVE_LOW>;
 
+    /* No driver for this compatible exists anywhere (Zephyr, ZMK, community modules) */
     paw3370_bamf: paw3370@0 {
         compatible = "pixart,paw3370";
+        status = "disabled";
         reg = <0>;
         spi-max-frequency = <4000000>;
         irq-gpios = <&gpio0 6 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;

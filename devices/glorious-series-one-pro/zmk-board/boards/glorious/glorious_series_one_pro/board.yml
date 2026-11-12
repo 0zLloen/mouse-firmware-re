@@ -1,0 +1,6 @@
+board:
+  name: glorious_series_one_pro
+  full_name: Glorious Series One Pro Wireless (CM2852-BAMF)
+  vendor: glorious
+  socs:
+    - name: nrf52840
