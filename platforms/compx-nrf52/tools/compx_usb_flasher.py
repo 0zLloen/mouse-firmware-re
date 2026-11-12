@@ -16,6 +16,8 @@ Implements the C52840Dongle USB HID Feature-report ISP protocol from FirmwareUpd
                5. Exit
              An interruption before step 4 leaves 0x6000 erased, so the bootloader stays
              resident. flash does not compare against a reference image before erasing.
+  dump       read-only backup: enter the bootloader and save flash (default 0x6000..0xFFFFF,
+             including the pairing/calibration pages) to an Intel HEX file; run it first.
 
 The app -> bootloader entry packet (enter_bootloader_from_app) is unverified: if the mouse
 does not re-enumerate as 258a:2103, put it in bootloader mode with the official updater and
@@ -26,6 +28,7 @@ import argparse
 import errno
 import fcntl
 import glob
+import hashlib
 import os
 import struct
 import sys
@@ -49,6 +52,7 @@ PID_MOUSE_APP = 0x2018
 PID_MOUSE_BL = 0x2103
 
 APP_BASE_ADDR = compx_hex_tool.MOUSE_APP_BASE
+FLASH_END = 0x00100000  # nRF52840: 1 MiB
 BLOCK = 32
 XOR_WIRE_KEY = 0x55  # USB wire only; .hex files are plain
 STATUS_OK = (0xA1, 0x02)
@@ -376,6 +380,42 @@ def cmd_flash(args) -> int:
     return 0
 
 
+def cmd_dump(args) -> int:
+    """Read-only backup: read flash through VerifyByAddress into an Intel HEX file."""
+    start, end, out = args.start, args.end, Path(args.out)
+    if start < APP_BASE_ADDR or start % BLOCK or not start < end <= FLASH_END:
+        raise ValueError(f"need 0x{APP_BASE_ADDR:X} <= start < end <= 0x{FLASH_END:X}, start 32-byte aligned")
+    if out.exists():
+        raise ValueError(f"{out} exists; refusing to overwrite a backup")
+    data = bytearray()
+    bl_node = enter_bootloader()
+    with CompxHidDevice(bl_node) as bl:
+        print(f"[DUMP] Bootloader at {bl_node}, GetBLFW: {bl_get_version(bl).hex()}")
+        for addr in range(start, end, BLOCK):
+            try:
+                data += bl_read_32(bl, addr, min(BLOCK, end - addr))
+            except RuntimeError as e:
+                print(f"[DUMP] Read refused at 0x{addr:08X} ({e}); keeping what was read")
+                break
+            if (addr + BLOCK - start) % 0x10000 == 0:
+                print(f"       read up to 0x{addr + BLOCK:08X}")
+        text = compx_hex_tool.encode_compx_hex(bytes(data), base_addr=start)
+        if start != APP_BASE_ADDR:  # no vector table here: drop the derived start address
+            text = "".join(line for line in text.splitlines(True) if not line.startswith(":04000005"))
+        out.write_text(text)
+        used = [start + o for o in range(0, len(data), 0x1000) if data[o : o + 0x1000].strip(b"\xFF")]
+        print(f"[DUMP] Wrote {out}: 0x{start:08X}..0x{start + len(data) - 1:08X} ({len(data)} bytes), "
+              f"SHA256={hashlib.sha256(data).hexdigest()}")
+        print("       non-blank 4 KB pages: " + (" ".join(f"0x{p:05X}" for p in used) or "none"))
+        if args.stay_in_bl:
+            return 0
+        print("         Sending Exit (0x04, mode=0x01)...")
+        bl_exit_to_app(bl)
+    app_node = wait_for_device(VID_SINOWEALTH, PID_MOUSE_APP, timeout_s=10.0)
+    print(f"[DUMP] Mouse back in application mode at {app_node}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compx nRF52840 mouse USB HID bootloader tool (Linux hidraw)")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -385,8 +425,14 @@ def main() -> int:
     p.add_argument("--stay-in-bl", action="store_true", help="Do not send Exit even on a full match")
     p = sub.add_parser("flash", help="Program and verify an Intel HEX image (lowest address 0x6000)")
     p.add_argument("--firmware-hex", required=True, help="Intel HEX to flash, e.g. the vendor .hex for rollback")
+    p = sub.add_parser("dump", help="Read-only backup of flash (default 0x6000..0xFFFFF) to an Intel HEX file")
+    p.add_argument("--out", required=True, help="Output .hex (never overwritten)")
+    p.add_argument("--start", type=lambda s: int(s, 0), default=APP_BASE_ADDR)
+    p.add_argument("--end", type=lambda s: int(s, 0), default=FLASH_END, help="Exclusive end address")
+    p.add_argument("--stay-in-bl", action="store_true", help="Do not send Exit afterwards")
     args = parser.parse_args()
-    return {"probe": cmd_probe, "verify-bl": cmd_verify_bl, "flash": cmd_flash}[args.cmd](args)
+    cmds = {"probe": cmd_probe, "verify-bl": cmd_verify_bl, "flash": cmd_flash, "dump": cmd_dump}
+    return cmds[args.cmd](args)
 
 
 if __name__ == "__main__":
