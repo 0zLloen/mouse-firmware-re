@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Offline checks for compx_hex_tool.py and compx_usb_flasher.py. No hardware is touched:
-the flasher's os/fcntl/time/device lookup are replaced by a mock bootloader.
+the flasher's os/fcntl/time/device lookup, or a fake hidapi module, talk to a mock bootloader.
 Run: python3 test_tools.py   (cross-checks against the `intelhex` package if installed)
 """
 
@@ -17,6 +17,7 @@ import compx_hex_tool as hx  # noqa: E402
 import compx_usb_flasher as fl  # noqa: E402
 
 BASE = 0x6000
+BACKEND = "hidraw"  # test_flasher runs once per backend
 
 
 def make_image(size=0x1000, sp=0x20008000, reset=BASE + 0x201, magic=True) -> bytes:
@@ -173,15 +174,74 @@ class MockDevice:
             self.mode = "app"
             raise OSError(errno.EPIPE, "reset")
 
-    def install(self):
+    def install(self, backend=None):
         def sleep(s):
             self.clock += s
 
-        fl.os = SimpleNamespace(open=self.open, close=lambda fd: None, access=lambda *a: True, O_RDWR=2, R_OK=4, W_OK=2)
-        fl.fcntl = SimpleNamespace(ioctl=self.ioctl)
         fl.time = SimpleNamespace(sleep=sleep, time=lambda: self.clock)
-        fl.find_hidraw_feature_node = self.node
+        if (backend or BACKEND) == "hidraw":
+            fl.os = SimpleNamespace(open=self.open, close=lambda fd: None, access=lambda *a: True, O_RDWR=2, R_OK=4, W_OK=2)
+            fl.fcntl = SimpleNamespace(ioctl=self.ioctl)
+            fl.find_hidraw_feature_node = self.node
+            fl.transport = fl.HidrawTransport()
+        else:
+            fl.os = fl.fcntl = fl.find_hidraw_feature_node = None  # the hidapi path must not touch hidraw
+            fl.transport = fl.HidapiTransport(FakeHid(self))
         return self
+
+
+class FakeHid:
+    """
+    The cython-hidapi 0.15 calls the flasher makes, over MockDevice: one entry per top-level collection
+    (each with its own path, as on Windows), bytes paths, send_feature_report returns -1 on failure,
+    get_feature_report raises OSError without errno. device() returns self: one device at a time.
+    """
+
+    def __init__(self, mock):
+        self.m, self.bl_open_fails, self.bl_usage = mock, 0, 0x00
+
+    def path(self, interface, usage_page, usage):
+        return f"{self.m.mode}-if{interface}-{usage_page:04x}-{usage:02x}".encode()
+
+    def enumerate(self, vid=0, pid=0):
+        if (vid, pid) != (0x258A, {"app": 0x2018, "bl": 0x2103}.get(self.m.mode)):
+            return []
+        cols = [(0, 0xFFFF, self.bl_usage)] if self.m.mode == "bl" else [  # app: hardware.md 2.2
+            (0, 0x0001, 0x02), (1, 0x000C, 0x01), (1, 0x0001, 0x80), (1, 0x0001, 0x06), (1, 0xFFA0, 0x01),
+            (1, 0xFFFF, 0x01), (2, 0xFFFF, 0x00)]
+        return [{"path": self.path(*c), "interface_number": c[0], "usage_page": c[1], "usage": c[2]} for c in cols]
+
+    def device(self):
+        return self
+
+    def open_path(self, path):
+        if self.m.mode == "bl" and self.bl_open_fails:
+            self.bl_open_fails -= 1
+            raise OSError("open failed")
+        if path != self.path(2 if self.m.mode == "app" else 0, 0xFFFF, 0x00):
+            raise OSError("open failed")
+
+    def close(self):
+        pass
+
+    def error(self):
+        return "mock hidapi error"
+
+    def send_feature_report(self, buf):
+        try:
+            self.m.ioctl(None, fl.HIDIOCSFEATURE(65), bytearray(buf))
+        except OSError:
+            return -1
+        return len(buf)
+
+    def get_feature_report(self, report_id, max_length):
+        assert (report_id, max_length) == (0, 65)
+        buf = bytearray(65)
+        try:
+            self.m.ioctl(None, fl.HIDIOCGFEATURE(65), buf)
+        except OSError:
+            raise OSError("read error") from None
+        return list(buf)
 
 
 def run(fn, **kw):
@@ -232,6 +292,8 @@ def test_flasher(tmp: Path):
     m = MockDevice(mode="bl", glitch_on=5).install()
     assert run(fl.cmd_flash, firmware_hex=str(good)) == 0
     assert len(m.programs) == len(set(m.programs)) + 1, "a SET error must not cause a blind resend"
+    fifth = [i for i, op in enumerate(m.ops) if op == 0x02][4]
+    assert m.ops[fifth + 1] == 0x83, "the failed SET is read back"
 
     for bad in (hx.encode_compx_hex(make_image(reset=0x7201), 0x7000), hx.encode_compx_hex(make_image(magic=False), BASE)):
         (tmp / "bad.hex").write_text(bad)
@@ -261,6 +323,56 @@ def test_flasher(tmp: Path):
     assert not any(m.programs), "dump must never program"
 
 
+def test_hidapi_selection(tmp: Path):
+    m = MockDevice(mode="app").install("hidapi")
+    fl.transport.hid.bl_open_fails = 3  # the new 258a:2103 is listed before it opens (udev ACL, driver install)
+    assert run(fl.cmd_dump, out=str(tmp / "a.hex"), start=BASE, end=0x6020, stay_in_bl=True) == 0 and m.mode == "bl"
+
+    m = MockDevice(mode="app").install("hidapi")
+    fl.transport.hid.bl_usage = 0x01  # a bootloader without the app's usage pair: not found, so not opened
+    err = run(fl.cmd_dump, out=str(tmp / "b.hex"), start=BASE, end=0x6020, stay_in_bl=False)
+    assert isinstance(err, RuntimeError) and "is in its bootloader" in str(err) and "0xFFFF/0x01" in str(err), err
+    assert m.mode == "bl" and not (tmp / "b.hex").exists()
+
+    m = MockDevice(mode="app").install("hidapi")
+    try:
+        fl.transport.get_feature(SimpleNamespace(get_feature_report=lambda *a: [0] * 9, error=lambda: ""))
+        raise AssertionError("a short feature report must be an error")
+    except OSError:
+        pass
+    h = fl.transport.hid
+    assert fl.transport.find(0x258A, 0x2018) == "app-if2-ffff-00", "not interface 1's 0xFFFF input collection"
+    one = FakeHid.enumerate(h, 0x258A, 0x2018)
+    h.enumerate = lambda vid, pid: one + [dict(d, path=d["path"] + b"#2") for d in one]
+    try:
+        fl.transport.find(0x258A, 0x2018)
+        raise AssertionError("two mice must be refused")
+    except RuntimeError:
+        pass
+
+    # --backend hidapi: hidapi's hidraw module on Linux (its `hid` there is libusb), `hid` elsewhere
+    linux = sys.platform.startswith("linux")
+    saved, argv = {k: sys.modules.get(k) for k in ("hid", "hidraw")}, sys.argv
+    sys.modules["hidraw" if linux else "hid"], sys.modules["hid" if linux else "hidraw"] = FakeHid(m), None
+    sys.argv = ["compx_usb_flasher.py", "--backend", "hidapi", "probe"]
+    try:
+        assert fl.main() == 0 and isinstance(fl.transport, fl.HidapiTransport) and m.mode == "app"
+        if linux:
+            sys.modules["hidraw"] = None
+            try:
+                fl.main()
+                raise AssertionError("Linux must not fall back to the libusb `hid` module")
+            except SystemExit as e:
+                assert "pip install hidapi" in str(e)
+    finally:
+        sys.argv = argv
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+
+
 def test_interface_selection(tmp: Path):
     import importlib
 
@@ -287,8 +399,11 @@ def test_interface_selection(tmp: Path):
 
 if __name__ == "__main__":
     test_hex_tool()
+    for BACKEND in ("hidraw", "hidapi"):
+        with tempfile.TemporaryDirectory() as d:
+            test_flasher(Path(d))
     with tempfile.TemporaryDirectory() as d:
-        test_flasher(Path(d))
+        test_hidapi_selection(Path(d))
     with tempfile.TemporaryDirectory() as d:
         test_interface_selection(Path(d))
     print("all checks passed")
