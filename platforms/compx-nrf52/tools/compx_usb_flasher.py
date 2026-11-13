@@ -10,7 +10,7 @@ Implements the C52840Dongle USB HID Feature-report ISP protocol from FirmwareUpd
              mismatch or error the mouse stays in the bootloader and the exit code is 1.
   flash      program an Intel HEX image whose lowest address is 0x6000:
                1. offline safety audit (compx_hex_tool.audit_binary_safety)
-               2. Erase, then confirm 0x6000 reads back erased
+               2. Erase, then write 0xFF to 0x6000 and confirm it reads back erased
                3. program and verify everything except the first 32-byte block
                4. program and verify the vector-table block at 0x6000 last
                5. Exit
@@ -209,7 +209,11 @@ def bl_read_32(bl: CompxHidDevice, address: int, length: int = BLOCK) -> bytes:
 
 
 def bl_erase_app(bl: CompxHidDevice) -> None:
-    """C52840Dongle::Erase (cmd 0x01), sent once. Its extent is defined by the bootloader (unknown)."""
+    """
+    C52840Dongle::Erase (cmd 0x01), sent once, exactly as the updater does. On a retail Series One Pro
+    (2026-11-13) it cleared 0x1E000..0x4D7FF (the readable top) but left 0x6000..0x1DFFF, the old
+    image, in place: it does not blank the vector table, see invalidate_vector_table().
+    """
     sent_error = None
     try:
         bl.set_feature(bytes(_bl_request(0x08, 0x01)), retries=1)
@@ -218,8 +222,17 @@ def bl_erase_app(bl: CompxHidDevice) -> None:
     resp = bl.poll_status(0.050, 40)
     if resp[0] not in STATUS_OK:
         raise RuntimeError(f"Erase failed or timed out (SET error: {sent_error}): last resp={resp[:16].hex()}")
+
+
+def invalidate_vector_table(bl: CompxHidDevice) -> None:
+    """
+    Make 0x6000 read 0xFF before anything else is written, so an interrupted flash leaves no valid
+    vector table. Program is read-modify-write on this bootloader (verified on a retail unit:
+    a 32-byte write lands exactly and the rest of the page is kept), so writing 0xFF blanks the block.
+    """
+    bl_program_32(bl, APP_BASE_ADDR, b"\xFF" * BLOCK)
     if bl_read_32(bl, APP_BASE_ADDR) != b"\xFF" * BLOCK:
-        raise RuntimeError("Erase not confirmed: 0x00006000 does not read back as 0xFF")
+        raise RuntimeError("0x00006000 does not read back as 0xFF; nothing else was written")
 
 
 def bl_program_32(bl: CompxHidDevice, address: int, chunk: bytes) -> None:
@@ -359,8 +372,9 @@ def cmd_flash(args) -> int:
     with CompxHidDevice(bl_node) as bl:
         print(f"        GetBLFW: {bl_get_version(bl).hex()}")
 
-        print("[1/4] Erase (extent defined by the bootloader)...")
+        print("[1/4] Erase (extent defined by the bootloader), then blank the vector table...")
         bl_erase_app(bl)
+        invalidate_vector_table(bl)
 
         print(f"[2/4] Programming 0x{APP_BASE_ADDR + BLOCK:08X}..0x{APP_BASE_ADDR + len(image) - 1:08X}...")
         for offset in range(BLOCK, len(image), BLOCK):

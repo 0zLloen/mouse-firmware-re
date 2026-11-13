@@ -91,7 +91,10 @@ def test_hex_tool():
 
 
 class MockDevice:
-    """Compx mouse in app (258a:2018) or bootloader (258a:2103) mode, at the ioctl level."""
+    """
+    Compx mouse in app (258a:2018) or bootloader (258a:2103) mode, at the ioctl level, modelled on a
+    retail Series One Pro (2026-11-13): Erase clears only 0x1E000 and up, Program is read-modify-write.
+    """
 
     def __init__(self, mode="bl", old=b"", die_after=None, glitch_on=None, honor_entry=True):
         self.mode, self.flash = mode, bytearray(b"\xFF" * 0x100000)
@@ -142,7 +145,7 @@ class MockDevice:
             r[0], r[8:12] = 0xA1, b"\xB0\x01\x00\x00"
             self.resp = bytes(r)
         elif op == 0x01:
-            self.flash[BASE:0x80000] = b"\xFF" * (0x80000 - BASE)
+            self.flash[0x1E000:0x80000] = b"\xFF" * (0x80000 - 0x1E000)  # the old image stays
             self.ok()
         elif op == 0x02:
             if self.die_after is not None and len(self.programs) == self.die_after:
@@ -150,7 +153,7 @@ class MockDevice:
                 raise OSError(errno.ENODEV, "unplugged")
             self.programs.append(addr)
             for i in range(n):
-                self.flash[addr + i] &= f[11 + i] ^ 0x55  # NOR flash: program only clears bits
+                self.flash[addr + i] = f[11 + i] ^ 0x55  # read-modify-write: exact bytes, rest of page kept
             self.ok()
             if len(self.programs) == self.glitch_on:
                 raise OSError(errno.ETIMEDOUT, "status stage timeout")
@@ -188,16 +191,16 @@ def test_flasher(tmp: Path):
     m = MockDevice(mode="app", old=old).install()
     assert run(fl.cmd_flash, firmware_hex=str(good)) == 0
     assert m.mode == "app" and m.flash[BASE : BASE + len(padded)] == padded
-    assert m.programs[0] == BASE + 32 and m.programs[-1] == BASE, "vector table must be programmed last"
-    assert len(m.programs) == len(set(m.programs)) == len(padded) // 32
+    assert m.programs[:2] == [BASE, BASE + 32] and m.programs[-1] == BASE, "blank 0x6000 first, vector table last"
+    assert len(m.programs) == len(padded) // 32 + 1 and len(set(m.programs)) == len(padded) // 32
 
     m = MockDevice(mode="bl", old=old, die_after=40).install()
     assert isinstance(run(fl.cmd_flash, firmware_hex=str(good)), OSError)
-    assert m.flash[BASE : BASE + 32] == b"\xFF" * 32, "interrupted flash must leave 0x6000 erased"
+    assert m.flash[BASE : BASE + 32] == b"\xFF" * 32, "interrupted flash must leave 0x6000 blank (Erase keeps it)"
 
     m = MockDevice(mode="bl", glitch_on=5).install()
     assert run(fl.cmd_flash, firmware_hex=str(good)) == 0
-    assert len(m.programs) == len(set(m.programs)), "a SET error must not cause a blind resend"
+    assert len(m.programs) == len(set(m.programs)) + 1, "a SET error must not cause a blind resend"
 
     for bad in (hx.encode_compx_hex(make_image(reset=0x7201), 0x7000), hx.encode_compx_hex(make_image(magic=False), BASE)):
         (tmp / "bad.hex").write_text(bad)
