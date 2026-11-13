@@ -150,6 +150,24 @@ Disassembly of `0x0001708C`–`0x00018558` in `CM2856_Mouse_USB_v1.00.00_2022081
 
 ---
 
+### 4.1 DPI Stages and the Active DPI in RAM
+
+From two independent disassembly passes over `CM2856_Mouse_USB_v1.00.00_20220810.hex` (backward from the DPI register writer `0x17860`, forward from the DPI button and the host HID commands), both checked in Unicorn emulation (**Inferred**, except where marked):
+
+| Address | Width | Meaning |
+| :--- | :--- | :--- |
+| `0x200038C8` | `0x266` bytes | RAM copy of the active profile config page (flash `0x8B000`, or the factory defaults at `0x1A3B8` when its length or CRC check fails, `0xD4A0`) |
+| `0x200038CF` | `u8` | Active profile, 0-based (`0..2`); profile base `P = 0x200038C8 + 200 * profile` |
+| `P+0x2B` / `P+0x2D` | `u16` LE | Current DPI X / Y (persisted copy) |
+| `P+0x30` / `P+0x31` | `u8` | Stage count (max 6) / stage index (0-based) |
+| `P+0x32+4i` / `P+0x34+4i` | `u16` LE | Stage `i` X / Y DPI |
+| `0x20004CE4` | 27 bytes | RAM copy of `P+0x2F..`; the stage index is at `0x20004CE6` |
+| **`0x20003068`** / `0x2000306A` | `u16` | **Live DPI X / Y in DPI units.** Written by every DPI path (DPI button, host HID over USB and 2.4 GHz, boot, profile switch) before the sensor is programmed at `0x17860`, which uses X only (`0x4D`/`0x4E`: 50-DPI steps below 10,100 DPI, 100-DPI steps up to 19,000). |
+
+- **Verified on hardware (2026-11-13):** the open-directional-dpi patch reads `0x20003068` on every sensor burst. Cycling the DPI button on a retail mouse reported 400 → 800 → 1600 → 3200 (that unit's stages), three times in a row.
+- A held DPI-shift ("sniper") key programs the sensor without updating `0x20003068`.
+- The stage index is not a reliable stand-in for the DPI. The factory defaults boot at 1200 DPI with index 2, and the DPI-adjust wheel and the host "set DPI" command change the DPI without changing the index.
+
 ## 5. Survey of Existing Open-Source Research (Phase A Questions 1–7)
 
 | Question | Finding | Classification | Sources |
