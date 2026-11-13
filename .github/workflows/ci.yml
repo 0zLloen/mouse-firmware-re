@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install check-jsonschema==0.39.0 intelhex==2.3.0
+
+      - name: No vendor binaries or raw captures tracked
+        run: |
+          bad=$(git -c core.ignorecase=true ls-files -ci --exclude-standard)   # .gitignore is the one list
+          if [ -n "$bad" ]; then
+            echo "::error::Binary or capture files must not be committed (see CONTRIBUTING.md, Never commit):"
+            echo "$bad"
+            exit 1
+          fi
+
+      - name: Compx tool tests (offline, mock bootloader)
+        run: python3 platforms/compx-nrf52/tools/test_tools.py
+
+      - name: device.yaml schema
+        run: |
+          for d in devices/*/; do [ -f "${d}device.yaml" ] || { echo "::error::${d} has no device.yaml"; exit 1; }; done
+          check-jsonschema --schemafile schema/device.schema.json devices/*/device.yaml
+
+      - name: No template placeholders left in device folders
+        run: |
+          if grep -rnE 'YYYY-MM-DD|example\.com|example-family|"0000:0000"|0{64}' devices --include=device.yaml --exclude-dir=_template; then
+            echo "::error::Replace or delete the template placeholders listed above"; exit 1
+          fi
+
+      - name: Issue forms
+        run: |
+          check-jsonschema --builtin-schema vendor.github-issue-config .github/ISSUE_TEMPLATE/config.yml
+          check-jsonschema --builtin-schema vendor.github-issue-forms $(find .github/ISSUE_TEMPLATE -name '*.yml' ! -name config.yml)

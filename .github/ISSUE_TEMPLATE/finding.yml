@@ -1,0 +1,62 @@
+name: Finding or correction
+description: Add, confirm or correct one claim about a device or platform that is already documented.
+title: "[finding] <device>: <claim>"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        One claim per issue. Evidence labels are defined in [CONTRIBUTING.md](https://github.com/0zLloen/mouse-firmware-re/blob/main/CONTRIBUTING.md#evidence-rules).
+        **Do not attach** firmware, dumps or raw USB captures, and remove serial numbers, Bluetooth/RF addresses and pairing keys.
+  - type: input
+    id: folder
+    attributes:
+      label: Device or platform folder
+      placeholder: devices/glorious-series-one-pro
+    validations:
+      required: true
+  - type: input
+    id: location
+    attributes:
+      label: Where the current text is (if correcting)
+      placeholder: hardware.md section 2.1, or device.yaml usb[0].product
+  - type: textarea
+    id: claim
+    attributes:
+      label: Claim
+      description: The fact, stated precisely (values, addresses, byte layouts).
+      placeholder: The wired application reports the product string "Series One PRO Wireless", not "Series One PRO".
+    validations:
+      required: true
+  - type: dropdown
+    id: evidence
+    attributes:
+      label: Evidence label
+      options:
+        - Verified
+        - Inferred
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: how
+    attributes:
+      label: How it was verified or inferred
+      description: "Command and date, file name + address, capture name, measurement setup. For Unknown: what would settle it."
+      placeholder: sudo lsusb -v -d 258a:2018 on a retail unit, 2026-11-12
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Source
+      description: Output excerpt (redacted), file hash, photo or document link.
+      render: text
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmations
+      options:
+        - label: I attached no vendor binaries, flash dumps or raw USB captures, and removed personal identifiers.
+          required: true
+        - label: This is my own work and may be published under the repository's MIT License.
+          required: true
