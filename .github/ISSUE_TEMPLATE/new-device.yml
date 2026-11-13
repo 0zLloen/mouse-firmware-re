@@ -1,0 +1,91 @@
+name: New device report
+description: Report a mouse that has no folder under devices/ yet. A maintainer turns it into devices/<vendor>-<model>/.
+title: "[device] <vendor> <model>"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! Fill in what you have; fields marked * are required. The steps are explained in [CONTRIBUTING.md](https://github.com/0zLloen/mouse-firmware-re/blob/main/CONTRIBUTING.md).
+        Label each fact **Verified**, **Inferred** or **Unknown** and say how you know it.
+        **Do not attach** firmware, updaters, flash dumps or raw USB captures, and remove serial numbers, Bluetooth/RF addresses and pairing keys from pasted output.
+  - type: input
+    id: name
+    attributes:
+      label: Device
+      description: Vendor and marketing name, as on the box.
+      placeholder: Glorious Series One Pro Wireless
+    validations:
+      required: true
+  - type: textarea
+    id: usb
+    attributes:
+      label: USB identities
+      description: "One line per identity: role (application / bootloader / receiver-application / receiver-bootloader), VID:PID, bcdDevice, product string, how and when you saw it."
+      placeholder: |
+        application           258a:2018  bcdDevice 0x0101  "Series One PRO Wireless"  Verified, lsusb -v, 2026-11-12
+        receiver-application  258a:2031  bcdDevice 0x0100  "Series One PRO Wireless"  Verified, lsusb -v, 2026-11-12
+    validations:
+      required: true
+  - type: textarea
+    id: descriptors
+    attributes:
+      label: lsusb -v and HID report descriptors
+      description: Output of `sudo lsusb -v -d VID:PID`, and each HID interface's report descriptor from `/sys/class/hidraw/*/device/report_descriptor` (hex, with length). Remove iSerial.
+      render: text
+  - type: textarea
+    id: hardware
+    attributes:
+      label: MCU, sensor and other chips
+      description: Part, exact marking, evidence label and source (FCC exhibit URL, teardown photo, firmware).
+      placeholder: "MCU: nRF52840-QIAA-D0, marking 'N52840 QIAAD0 2144MX', Verified, FCC internal photos https://fccid.io/..."
+  - type: input
+    id: fcc
+    attributes:
+      label: FCC ID
+      placeholder: 2AXP2-SP22
+  - type: textarea
+    id: firmware
+    attributes:
+      label: Official firmware / updater
+      description: Download URL, version, file names (with nesting) and SHA-256 of each file. Never the files themselves.
+  - type: textarea
+    id: bootloader
+    attributes:
+      label: Bootloader, update protocol and flash layout
+      description: Whatever you found so far, with evidence labels. Mark regions that must be preserved (bootloader, pairing, calibration).
+  - type: textarea
+    id: recovery
+    attributes:
+      label: Recovery
+      description: Known ways back to stock firmware, and whether you tried them.
+  - type: dropdown
+    id: step
+    attributes:
+      label: Furthest step reached
+      description: The safety ladder in CONTRIBUTING.md.
+      options:
+        - 1. Identify
+        - 2. Open-source intel
+        - 3. Vendor updater analysis
+        - 4. Passive USB capture
+        - 5. Static disassembly
+        - 6. Read-back and backup
+        - 7. Writing flash / SWD
+    validations:
+      required: true
+  - type: textarea
+    id: sources
+    attributes:
+      label: Sources and related projects
+      description: Links (FCC, teardowns, open-source firmware), tools and versions used.
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmations
+      options:
+        - label: I attached no vendor binaries, flash dumps or raw USB captures.
+          required: true
+        - label: I removed serial numbers, Bluetooth/RF addresses and pairing keys.
+          required: true
+        - label: This is my own work and may be published under the repository's MIT License.
+          required: true

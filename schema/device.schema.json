@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mouse-firmware-re device.yaml",
+  "description": "Structured summary of one device folder (devices/<vendor>-<model>/). Only name, vendor and usb are required; leave out what you do not know. See CONTRIBUTING.md.",
+  "type": "object",
+  "required": ["name", "vendor", "usb"],
+  "additionalProperties": false,
+  "properties": {
+    "name": { "type": "string", "minLength": 1, "description": "Marketing name as printed on the box." },
+    "vendor": { "type": "string", "minLength": 1 },
+    "oem": { "type": "string", "description": "Design house / ODM, if known (e.g. from PCB silkscreen)." },
+    "fcc_id": { "type": "string" },
+    "platform": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "description": "Folder name under platforms/ when the MCU + bootloader family is shared with other devices."
+    },
+    "usb": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/evidence",
+        "required": ["role", "vid_pid"],
+        "properties": {
+          "role": { "enum": ["application", "bootloader", "receiver-application", "receiver-bootloader"] },
+          "vid_pid": { "type": "string", "pattern": "^[0-9a-f]{4}:[0-9a-f]{4}$", "description": "Lower-case, as lsusb prints it, e.g. \"258a:2018\"." },
+          "bcd_device": { "type": "string", "pattern": "^0x[0-9a-fA-F]{4}$" },
+          "manufacturer": { "type": "string" },
+          "product": { "type": "string" },
+          "firmware_version": { "type": "string", "description": "Version this identity reports (vendor app or a version query)." },
+          "report_descriptor_lengths": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 0 },
+            "description": "HID report descriptor length in bytes, one entry per interface number starting at 0; 0 for a non-HID interface."
+          }
+        },
+        "unevaluatedProperties": false
+      }
+    },
+    "mcu": { "type": "array", "items": { "$ref": "#/$defs/chip" } },
+    "sensor": { "$ref": "#/$defs/chip" },
+    "firmware": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidence",
+        "required": ["version", "file", "sha256", "url"],
+        "properties": {
+          "component": { "$ref": "#/$defs/component" },
+          "version": { "type": "string", "minLength": 1 },
+          "file": { "type": "string", "minLength": 1, "description": "File name only. The file itself is never committed." },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "url": { "type": "string", "pattern": "^https?://", "description": "Official download (page) the outermost package came from." },
+          "inside": { "type": "string", "description": "Path from the downloaded package to this file, e.g. \"Setup.exe > payload.zip (password X)\"." }
+        },
+        "unevaluatedProperties": false
+      }
+    },
+    "flash_layout": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidence",
+        "required": ["start", "end", "name"],
+        "properties": {
+          "component": { "$ref": "#/$defs/component" },
+          "start": { "$ref": "#/$defs/address" },
+          "end": { "$ref": "#/$defs/address", "description": "Inclusive last address." },
+          "name": { "type": "string", "minLength": 1 },
+          "preserve": { "type": "boolean", "description": "true = tools must never erase or write this region (bootloader, pairing keys, calibration, unit-specific data)." }
+        },
+        "unevaluatedProperties": false
+      }
+    },
+    "bootloader": {
+      "$ref": "#/$defs/evidence",
+      "required": ["protocol"],
+      "properties": {
+        "protocol": { "type": "string", "minLength": 1, "description": "Transport and command set, or a link to the platforms/ spec." },
+        "entry": { "type": "string", "description": "How the device gets into the bootloader (command, magic word, button chord, pads)." }
+      },
+      "unevaluatedProperties": false
+    },
+    "recovery": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidence",
+        "required": ["method"],
+        "properties": { "method": { "type": "string", "minLength": 1 } },
+        "unevaluatedProperties": false
+      }
+    },
+    "related_firmware": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "url"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "url": { "type": "string", "pattern": "^https?://" },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "docs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Markdown files in this device folder (relative paths)."
+    }
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "required": ["evidence", "source"],
+      "properties": {
+        "evidence": { "enum": ["verified", "inferred", "unknown"] },
+        "source": {
+          "type": "string",
+          "minLength": 3,
+          "description": "verified: what you ran/read and when (command + date, file + address, photo URL). inferred: what it is inferred from. unknown: what would settle it."
+        }
+      }
+    },
+    "chip": {
+      "$ref": "#/$defs/evidence",
+      "required": ["part"],
+      "properties": {
+        "component": { "$ref": "#/$defs/component" },
+        "part": { "type": "string", "minLength": 1 },
+        "marking": { "type": "string", "description": "Text printed on the package, exactly as read." }
+      },
+      "unevaluatedProperties": false
+    },
+    "component": { "enum": ["mouse", "receiver"], "description": "Which board this is about. Default: mouse." },
+    "address": { "type": "string", "pattern": "^0x[0-9a-fA-F]{8}$" }
+  }
+}

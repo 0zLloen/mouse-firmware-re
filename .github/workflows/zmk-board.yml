@@ -1,0 +1,45 @@
+name: ZMK board
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - devices/glorious-series-one-pro/zmk-board/**
+      - platforms/compx-nrf52/tools/compx_hex_tool.py
+      - .github/workflows/zmk-board.yml
+
+permissions:
+  contents: read
+
+jobs:
+  zmk-board:
+    runs-on: ubuntu-24.04
+    # Container tag and ZMK commit move together: ZMK main at this commit uses Zephyr 4.1.
+    container: zmkfirmware/zmk-build-arm:4.1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: zmkfirmware/zmk
+          ref: 4dd95d7840eb3d5a3f59bb29fbf1ab054715ef85 # main, 2026-11-13
+          path: zmk
+
+      - name: West workspace
+        working-directory: zmk
+        run: |
+          west init -l app
+          west update --fetch-opt=--filter=tree:0
+          west zephyr-export
+
+      - name: Build glorious_series_one_pro
+        working-directory: zmk
+        run: west build -s app -d "$GITHUB_WORKSPACE/build" -b glorious_series_one_pro -- -DBOARD_ROOT="$GITHUB_WORKSPACE/devices/glorious-series-one-pro/zmk-board"
+
+      - name: Recovery symbols present, image passes the Compx audit
+        run: |
+          readelf -sW build/zephyr/zmk.elf > symbols.txt
+          for s in glorious_enter_compx_bootloader glorious_boot_chord_recovery_check compx_bl_api; do
+            grep -qw "$s" symbols.txt || { echo "::error::$s missing from zmk.elf"; exit 1; }
+          done
+          python3 platforms/compx-nrf52/tools/compx_hex_tool.py audit build/zephyr/zmk.hex

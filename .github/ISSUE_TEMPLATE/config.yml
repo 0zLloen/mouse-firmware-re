@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Contributor guide
+    url: https://github.com/0zLloen/mouse-firmware-re/blob/main/CONTRIBUTING.md
+    about: How to reverse-engineer a mouse safely and what a device report needs.

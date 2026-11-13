@@ -1,0 +1,114 @@
+# yaml-language-server: $schema=../../schema/device.schema.json
+# Copy this folder to devices/<vendor>-<model>/ and replace every value.
+# Only name, vendor and usb are required: delete any section you have nothing for yet.
+# Every item carries:
+#   evidence: verified | inferred | unknown   (definitions in CONTRIBUTING.md)
+#   source:   verified -> what you ran or read, and when (command + date, file + address, photo URL)
+#             inferred -> what you inferred it from
+#             unknown  -> what would settle it
+# Hex values are quoted strings so YAML does not turn them into numbers.
+# Full example: devices/glorious-series-one-pro/device.yaml
+
+# Marketing name, as on the box.
+name: Example Mouse Pro Wireless
+# Brand that sells it.
+vendor: Example
+# Design house / ODM if known (PCB silkscreen, firmware strings). Optional.
+oem: Example OEM Ltd.
+# FCC ID from the label or manual. Optional.
+fcc_id: 2ABCD-EX01
+# platforms/<family> folder if the MCU + bootloader family is shared with other devices. Optional.
+platform: example-family
+
+# One entry per USB identity you have seen or read: wired app, bootloader, receiver, receiver bootloader.
+# A ROM bootloader is role: bootloader (say "ROM" in source); a bootloader whose VID:PID is not known
+# yet goes under bootloader:; Bluetooth identities go in README.md.
+usb:
+  # application | bootloader | receiver-application | receiver-bootloader
+  - role: application
+    # VID:PID in lower case ("258a:2018"), also when Windows shows VID_258A&PID_2018.
+    vid_pid: "0000:0000"
+    # bcdDevice as "0xXXXX": lsusb -v "1.01" -> "0x0101"; Windows REV_0101 -> "0x0101"; macOS "Version: 1.01" -> "0x0101".
+    bcd_device: "0x0100"
+    # iManufacturer and iProduct strings, exactly as reported (never iSerial).
+    manufacturer: Example
+    product: Example Mouse
+    # Firmware version this identity reports (vendor app or a version query). Optional.
+    firmware_version: v0.0.0
+    # Report descriptor size per interface number from 0 (0 for a non-HID interface).
+    report_descriptor_lengths: [0]
+    evidence: verified
+    source: lsusb -v on a real unit, YYYY-MM-DD
+
+# Main microcontroller(s).
+mcu:
+  # mouse | receiver
+  - component: mouse
+    # Part number as decoded from the marking and datasheet.
+    part: Example MCU
+    # Package text exactly as read. Optional.
+    marking: EXAMPLE 1234
+    evidence: inferred
+    source: what you read it from (photo URL, firmware vector table, updater strings)
+
+# Optical sensor (same fields as an mcu entry).
+sensor:
+  part: Example sensor
+  marking: EX 0000
+  evidence: unknown
+  source: what would settle it (teardown photo, SPI register reads in firmware)
+
+# Official firmware files. Never commit the files themselves.
+firmware:
+  # Optional: mouse | receiver
+  - component: mouse
+    # Version as the vendor names it.
+    version: v0.0.0
+    # File name only.
+    file: example_firmware.hex
+    # sha256sum of that file (lower case).
+    sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    # Official page or file URL you downloaded the outermost package from.
+    url: https://example.com/support/downloads
+    # Path from the downloaded package to this file. Optional.
+    inside: Example_Updater.exe > payload.zip
+    evidence: verified
+    source: sha256sum of the extracted file, YYYY-MM-DD
+
+# Flash regions, addresses as 8-digit hex, end inclusive.
+flash_layout:
+  # Optional: mouse | receiver
+  - component: mouse
+    start: "0x00000000"
+    end: "0x00000FFF"
+    name: bootloader
+    # true = tools must never erase or write it (bootloader, pairing keys, calibration).
+    # Bound unknown? For preserve: true give the widest plausible range, evidence: unknown, and say so in source.
+    preserve: true
+    evidence: unknown
+    source: what would settle it (lowest address in the official image, read-back)
+
+# How firmware gets onto the device: the bootloader updates use. A second one (e.g. ROM ISP) goes under recovery.
+bootloader:
+  # Transport and command set, or a link to platforms/<family>/.
+  protocol: unknown transport
+  # How the device enters it (USB command, button chord at power-on, magic word, pads). Optional.
+  entry: unknown
+  evidence: unknown
+  source: what would settle it (updater decompilation, USB capture of an update)
+
+# Ways back to a working mouse. Say whether each was actually tried.
+recovery:
+  - method: re-flash the official image with the official updater
+    evidence: unknown
+    source: not tried yet
+
+# Open-source firmware or tools that target this device or its MCU. Optional.
+related_firmware:
+  - name: Example project
+    url: https://example.com/project
+    note: what it covers for this device
+
+# Markdown files in this folder.
+docs:
+  - README.md

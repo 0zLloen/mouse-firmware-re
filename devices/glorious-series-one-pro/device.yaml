@@ -1,0 +1,152 @@
+# yaml-language-server: $schema=../../schema/device.schema.json
+# Structured summary of this folder. Details and evidence are in the files under `docs`.
+name: Glorious Series One Pro Wireless
+vendor: Glorious
+oem: Compx Technology (Shenzhen)
+fcc_id: 2AXP2-SP22
+platform: compx-nrf52
+
+usb:
+  - role: application
+    vid_pid: "258a:2018"
+    bcd_device: "0x0101"
+    manufacturer: Glorious
+    product: Series One PRO Wireless
+    firmware_version: v1.0.0.0
+    report_descriptor_lengths: [91, 163, 20]
+    evidence: verified
+    source: lsusb -v and /sys/class/hidraw/*/device/report_descriptor on a real mouse, wired, full-speed, 2026-11-12
+  - role: receiver-application
+    vid_pid: "258a:2031"
+    bcd_device: "0x0100"
+    product: Series One PRO Wireless
+    evidence: verified
+    source: lsusb -v on a real receiver, 2026-11-12
+  - role: bootloader
+    vid_pid: "258a:2103"
+    manufacturer: Glorious
+    product: Glorious bootloader
+    evidence: verified
+    source: lsusb on a retail mouse after compx_usb_flasher.py dump sent the updater's SetBLDeviceMode packet, 2026-11-13; GetBLFW answered b0 01 00 00
+  - role: receiver-bootloader
+    vid_pid: "258a:2113"
+    evidence: inferred
+    source: PID constant in FirmwareUpdate.exe (Form1::InitDevice, C52840Dongle); not yet seen enumerating
+
+mcu:
+  - component: mouse
+    part: Nordic nRF52840-QIAA-D0 (1 MB flash, 256 KB RAM, silicon rev 2)
+    marking: N52840 QIAAD0 2144MX
+    evidence: verified
+    source: U1 marking in FCC internal photos (https://fccid.io/2AXP2SP22)
+  - component: receiver
+    part: Nordic nRF52840
+    evidence: inferred
+    source: updater class C52840Dongle and the Cortex-M4 vector table at 0x7000 in the receiver .hex; no receiver photo checked
+
+sensor:
+  part: PixArt PAW3370 derivative (Glorious BAMF)
+  marking: BAMF 2152
+  evidence: inferred
+  source: marking read from FCC internal photos (verified); PAW3370 lineage from package shape and the stock SPI register driver at CM2856_Mouse_USB_v1.00.00_20220810.hex @ 0x0001708C
+
+firmware:
+  - version: v1.0.0.0
+    file: v1.0.0.0_20220810_Series_One_ProFirmware.zip
+    sha256: c9db15ef2ec11f8d44508ae16e0f98d22a60ba83a727163f7a0b7b1c5dd87814
+    url: https://nyc3.digitaloceanspaces.com/gloriouscore/Glorious_Core/v1.0.0.0_20220810_Series_One_ProFirmware.zip
+    evidence: verified
+    source: sha256sum of the downloaded package; URL from Glorious Core's update manifest Glorious_Core/Version.json, which still lists it, but the file returns HTTP 403 since at least 2026-11-13 (no Wayback copy)
+  - component: mouse
+    version: v1.00.00
+    file: CM2856_Mouse_USB_v1.00.00_20220810.hex
+    sha256: 2c5c1672ca0415a8f557c8a1dda3b71390fb2b97a226f3fc3cde78e01d188a92
+    url: https://gloriouscore.nyc3.digitaloceanspaces.com
+    inside: v1.0.0.0_20220810_Series_One_ProFirmware.exe > XVI.zip (password XVI)
+    evidence: verified
+    source: sha256sum of the extracted file; a mouse on this release answers the 0x00/0x81 version query with a1 00 00 03 00 81 01 00 00 00 20 18 (v1.0.0.0, PID 0x2018), 2026-11-12
+  - component: receiver
+    version: v1.00.00
+    file: CM2856_Receiver_USB_v1.00.00_20220810.hex
+    sha256: e60c5dbc853b3f07323efa9571e609813ae649eea9f92b67160f5a85ef0f103e
+    url: https://gloriouscore.nyc3.digitaloceanspaces.com
+    inside: v1.0.0.0_20220810_Series_One_ProFirmwareWireless.exe > XVI.zip (password XVI)
+    evidence: verified
+    source: sha256sum of the extracted file
+
+flash_layout:
+  - start: "0x00000000"
+    end: "0x00005FFF"
+    name: Compx USB HID bootloader (24 KB, not in any official package)
+    preserve: true
+    evidence: inferred
+    source: lowest address of CM2856_Mouse_USB_v1.00.00_20220810.hex is 0x00006000
+  - start: "0x00006000"
+    end: "0x0001CC8F"
+    name: stock application image (93,328 B)
+    evidence: verified
+    source: record addresses of CM2856_Mouse_USB_v1.00.00_20220810.hex; a retail unit's USB read-back of this range matches it byte for byte (2026-11-13)
+  - start: "0x00006000"
+    end: "0x0007DFFF"
+    name: application partition (repository write limit; custom firmware lives here)
+    evidence: inferred
+    source: repository convention (flash-layout-and-swd.md 4.1), enforced by compx_hex_tool.py audit
+  - start: "0x00088000"
+    end: "0x00088FFF"
+    name: system config / 2.4 GHz pairing page (32 B + CRC-16)
+    preserve: true
+    evidence: inferred
+    source: CM2856_Mouse_USB_v1.00.00_20220810.hex @ 0x00014700-0x00014770 (disassembly); not readable over USB (VerifyByAddress refuses 0x0004D800 and up)
+  - start: "0x0008B000"
+    end: "0x0008CFFF"
+    name: active profile (0x8B) and extended config (0x8C) pages
+    preserve: true
+    evidence: inferred
+    source: CM2856_Mouse_USB_v1.00.00_20220810.hex @ 0x00014668-0x00014700 (disassembly)
+  - start: "0x00090000"
+    end: "0x000DFFFF"
+    name: per-button macro and profile pages
+    evidence: inferred
+    source: erased/written by HID commands 0x07-0x09 in CM2856_Mouse_USB_v1.00.00_20220810.hex (disassembly)
+  - component: receiver
+    start: "0x00000000"
+    end: "0x00006FFF"
+    name: Compx USB HID dongle bootloader (28 KB)
+    preserve: true
+    evidence: inferred
+    source: lowest address of the official receiver .hex is 0x00007000
+  - component: receiver
+    start: "0x00007000"
+    end: "0x0001203F"
+    name: stock receiver application image (45,120 B)
+    evidence: verified
+    source: record addresses of CM2856_Receiver_USB_v1.00.00_20220810.hex
+
+bootloader:
+  protocol: Compx USB HID ISP, 64-byte Feature reports on interface 2 (usage page 0xFFFF), payload XOR 0x55 on the wire; see platforms/compx-nrf52/bootloader-protocol.md
+  entry: Feature report feat[2]=0x00 (deviceID), feat[3]=0x01, feat[6]=0xB0, rest 0 ("set device mode" to 0xB0); the application then writes 0xA55AA55A to SRAM 0x2003FFFC and resets
+  evidence: verified
+  source: packet read from FirmwareUpdate.exe 1.0.8229.18185 IL (C52840Dongle::SetBLDeviceMode) and tested on a retail mouse, 2026-11-13; the magic-word path is from CM2856_Mouse_USB_v1.00.00_20220810.hex @ 0x00014832 (disassembly, inferred); Erase extent unknown
+
+recovery:
+  - method: re-flash the official .hex through the resident bootloader (official updater or compx_usb_flasher.py flash)
+    evidence: inferred
+    source: updater never writes below 0x6000; not yet exercised on hardware
+  - method: SWD on unlabelled test pads near U1 (pad order and APPROTECT state not checked)
+    evidence: unknown
+    source: needs a passive continuity check and a read-only CTRL-AP APPROTECTSTATUS read (flash-layout-and-swd.md section 5)
+
+related_firmware:
+  - name: ZMK
+    url: https://github.com/zmkfirmware/zmk
+    note: draft board in zmk-board/ builds on ZMK main; no PAW3370 driver yet, so no motion
+  - name: Project UFA
+    url: https://github.com/aroum/ufa
+    note: ZMK for nRF52 mice (PAW3395 class); no Glorious target
+
+docs:
+  - hardware.md
+  - firmware-updater.md
+  - flash-layout-and-swd.md
+  - flashing-feasibility.md
+  - zmk-board/README.md

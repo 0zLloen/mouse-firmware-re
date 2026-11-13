@@ -8,6 +8,9 @@ Open documentation, bootloader protocol specifications, flash memory layouts, an
 
 ```text
 mouse-firmware-re/
+├── CONTRIBUTING.md                        # How to reverse-engineer a mouse safely and submit findings
+├── schema/device.schema.json              # JSON Schema for every devices/*/device.yaml (checked in CI)
+├── .github/                               # Issue forms (new device, finding/correction), PR checklist, CI
 ├── platforms/
 │   └── compx-nrf52/                       # Compx / Sinowealth Nordic nRF52840 OEM platform (VID 0x258a)
 │       ├── bootloader-protocol.md         # Resident USB HID ISP bootloader protocol (mouse 258a:2103: 24 KB, app at 0x6000;
@@ -17,7 +20,9 @@ mouse-firmware-re/
 │           ├── compx_usb_flasher.py       # Linux hidraw probe, full read-back verifier, and .hex programmer
 │           └── test_tools.py              # Offline checks for both tools (mock bootloader, no hardware)
 └── devices/
+    ├── _template/                         # Copy to devices/<vendor>-<model>/: README.md skeleton + device.yaml
     └── glorious-series-one-pro/           # Glorious Forge Series One Pro Wireless (FCC ID: 2AXP2-SP22, CM2852-BAMF)
+        ├── device.yaml                    # Structured summary: USB IDs, chips, firmware hashes, flash layout, recovery
         ├── hardware.md                    # MCU (nRF52840-QIAA-D0), PAW3370 SPI2 bus, and GPIO pinout from FW disassembly
         ├── firmware-updater.md            # Analysis of official Glorious updater archives, SHA-256 hashes, and XVI.zip
         ├── flash-layout-and-swd.md        # 1 MB flash layout, pairing page (0x00088000), and passive SWD check procedure
@@ -29,16 +34,25 @@ mouse-firmware-re/
 
 ---
 
+## Contributing
+
+Reverse-engineered a mouse, or want to? [`CONTRIBUTING.md`](CONTRIBUTING.md) walks through it as a safety ladder, from reading USB descriptors to writing flash, and explains how to submit what you find:
+
+- copy [`devices/_template/`](devices/_template/) to `devices/<vendor>-<model>/` and fill in `device.yaml` (validated against [`schema/device.schema.json`](schema/device.schema.json)) and `README.md`, then open a pull request;
+- or, without a pull request, open a [New device report](https://github.com/0zLloen/mouse-firmware-re/issues/new?template=new-device.yml) or a [Finding or correction](https://github.com/0zLloen/mouse-firmware-re/issues/new?template=finding.yml) issue.
+
+---
+
 ## Repository Policies
 
 1. **No Proprietary Firmware Binaries Committed**:
    - Do **not** commit vendor `.exe`, `.dll`, `.bin`, or `.hex` firmware dumps.
    - Document official package URLs, version numbers, and SHA-256 checksums so researchers can verify and extract their own local copies.
 2. **Evidence Classification**:
-   - Hardware and protocol claims are labeled:
-     - **Verified**: observed directly (live USB enumeration on a real device), or read literally from an official file (hashes, record addresses, strings, constants, markings printed in FCC photos).
-     - **Inferred**: an interpretation of disassembly, decompilation or photos (what a pin or command does, how the bootloader behaves).
-     - **Unknown**: needs hardware probing or the bootloader binary.
+   - Every claim is labelled as defined in [CONTRIBUTING.md](CONTRIBUTING.md#evidence-rules):
+     - **Verified**: observed directly on a real unit (USB enumeration, a read-back, a measurement), or read literally from an official file or photo (a hash, a record address, a string, a constant, a chip marking).
+     - **Inferred**: your interpretation of disassembly, decompilation, USB captures or photos: what a pin does, what a command means, how a bootloader behaves.
+     - **Unknown**: not established yet; say what would settle it.
 3. **Bootloader & Calibration Preservation**:
    - Tools in this repository never execute mass-erase (`APPROTECT` recovery / `ERASEALL`). `Program` writes are limited to the application partition (`0x00006000`–`0x0007DFFF` on the mouse), so they never touch the resident 24 KB USB HID bootloader (`0x00000000`–`0x00005FFF`) or the factory 2.4 GHz pairing page (`0x00088000`).
    - The flasher has to send the bootloader's parameterless `Erase`, whose extent is defined by the bootloader and is **Unknown**. It may also clear the `0x7E000` settings page and the `0x88000`+ pairing/profile pages; measure that before relying on them surviving a reflash.
