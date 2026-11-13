@@ -8,8 +8,8 @@ All official installers, manifests, and firmware archives were inspected offline
 
 | Artifact / File Name | Version / Date | Size (Bytes) | SHA-256 Hash | Origin / Container |
 | :--- | :--- | :--- | :--- | :--- |
-| `GloriousCore.zip` | `1.1.36` | `177,090,635` | `31327ec4deadbf672b05b78c48a826270f361216cdac7134f74379a9f5a0190a` | Glorious Legacy Software (`https://www.gloriousgaming.com/pages/legacy-software`) |
-| `GloriousCore_Setup_1.1.36.exe` | `1.1.36` | `180,261,998` | `7f68626ebf7d61659629808d48936d5f404921a4728624f146e99acbc07e4f9d` | Inside `GloriousCore.zip` (Inno Setup 6.0.5 archive) |
+| `GloriousCore.zip` | `1.1.36` | `164,988,882` | `31327ec4deadbf672b05b78c48a826270f361216cdac7134f74379a9f5a0190a` | Glorious Legacy Software (`https://www.gloriousgaming.com/pages/legacy-software`) |
+| `GloriousCore_Setup_1.1.36.exe` | `1.1.36` | `165,458,232` | `7f68626ebf7d61659629808d48936d5f404921a4728624f146e99acbc07e4f9d` | Inside `GloriousCore.zip` (Inno Setup 6.0.5 archive) |
 | `manifest.json` (AWS S3 bucket index) | `2022–2024` | `460,572` | `596fb696e34fe1c0a09465ac15b405caa7e0d9e5b851fb539b1fa7f42724026a` | `https://gloriouscore.nyc3.digitaloceanspaces.com` / S3 firmware bucket listing |
 | `v1.0.0.0_20220810_Series_One_ProFirmware.zip` | `v1.0.0.0` (`2022-08-10`) | `940,348` | `c9db15ef2ec11f8d44508ae16e0f98d22a60ba83a727163f7a0b7b1c5dd87814` | Official Glorious Series One Pro firmware package (`DevFw/v1.0.0.0_20220810_Series_One_ProFirmware.zip`) |
 | `v1.0.0.0_20220810_Series_One_ProFirmware.exe` | `v1.0.0.0` | `536,576` | `e9e6c4fbd14c935cd31a2daa4992d20ac328bfd272b35e59233f09789b3c2576` | Self-extracting archive inside `Series_One_ProFirmware.zip` (Wired Mouse updater) |
@@ -21,6 +21,8 @@ All official installers, manifests, and firmware archives were inspected offline
 | `CM2856_Receiver_USB_v1.00.00_20220810.hex` | `v1.00.00` | `127,027` | `e60c5dbc853b3f07323efa9571e609813ae649eea9f92b67160f5a85ef0f103e` | Extracted from Wireless `XVI.zip` (Receiver nRF52840 application Intel HEX) |
 
 ---
+
+> **Availability (checked 2026-11-13).** `GloriousCore.zip` still downloads from `https://downloads.gloriousgamingservices.com/download/GloriousCore.zip` (SHA-256 above; the sizes in this table were corrected on that date), but it does **not** contain the Series One Pro updater: Glorious Core fetches it on demand. Its update manifest `https://gloriouscore.nyc3.digitaloceanspaces.com/Glorious_Core/Version.json` (still public) points the Series One Pro (`0x258A`/`0x2018`, version 1.0.0.0) to `https://nyc3.digitaloceanspaces.com/gloriouscore/Glorious_Core/v1.0.0.0_20220810_Series_One_ProFirmware.zip`, which now returns HTTP 403, as does every other firmware package in that bucket; the Wayback Machine has no copy. Keep your own copy of the package and check it against the SHA-256 above.
 
 ## 2. Extraction & Packaging Chain
 
@@ -94,22 +96,18 @@ In Windows HID / Linux `hidraw` / WebHID, the buffer passed to `HidD_SetFeature`
 
 ### 4.1 Step 1 — Switching from Application Mode to Bootloader Mode
 
-> **Unknown — exact packet.** The layout below conflicts with the one `platforms/compx-nrf52/tools/compx_usb_flasher.py` sends (`feat[3] = 0x02`, `feat[6] = 0xB0`, rest `0x00`, i.e. `buf[4] = 0x02`, `buf[7] = 0xB0`). Neither has been re-checked against the `FirmwareUpdate.exe` decompilation or tried on hardware. `bootloader-protocol.md` lists both; until one is confirmed, enter the bootloader with the official updater.
+> **Verified (2026-11-13).** `C52840Dongle::SetBLDeviceMode` in the IL of `FirmwareUpdate.exe` 1.0.8229.18185 builds `buf[3] = deviceID` (`0` for the wired mouse, `Config.ini` `[Debug] DeviceID`), `buf[4] = 0x01`, `buf[7] = 0xB0`, everything else `0x00` (`buf[0]` is the report ID). That is "set device mode" (command `0x00`, length 1) with mode `0xB0`. Sent by `platforms/compx-nrf52/tools/compx_usb_flasher.py` to a retail mouse on v1.0.0.0, it switched the mouse to `258a:2103` (`Glorious bootloader`). An earlier version of this section gave `buf[6] = 0x06, buf[7] = 0xB0, buf[8] = 0x04, buf[9] = 0x00` as this packet; that was wrong. `0xB0 0x04` is the bootloader's own `Exit` command.
 
-Notes from the decompilation of `C52840Dongle::SetBLDeviceMode` (`FirmwareUpdate.exe`) and disassembly of the stock firmware's USB Feature report dispatcher (`0x0001451C`–`0x00014AD0`) suggest two ways the stock firmware enters the bootloader (Inferred):
+```
+buf[0] = 0x00  // Report ID
+buf[3] = 0x00  // deviceID (wired mouse)
+buf[4] = 0x01  // length
+buf[7] = 0xB0  // mode: bootloader (command buf[6] = 0x00 "set device mode")
+```
 
-1. **Via Bootloader Subcommand (`buf[7] == 0xB0`, dispatched at `0x00014548`)**:
-   - `FirmwareUpdate.exe` sends `SetFeature` (65 bytes):
-     ```
-     buf[0] = 0x00  // Report ID
-     buf[1..5] = 0x00
-     buf[6] = 0x06  // Length = 6
-     buf[7] = 0xB0  // Bootloader family marker
-     buf[8] = 0x04  // Command: Enter Bootloader (0x04 for Wired Mouse, 0x05 for Dongle)
-     buf[9] = 0x00  // Mode = 0x00 (enter BL)
-     ```
-2. **Via Direct App Command `0x03` (`buf[6] == 0x03`, dispatched at `0x00014824`)**:
-   - When the firmware sees `buf[6] == 0x03` (with `buf[1] == 0x00`, or after `buf[7] == 0xB0, buf[8] == 0x04`):
+Disassembly of the stock firmware's USB Feature report dispatcher (`0x0001451C`–`0x00014AD0`) shows how the application then enters the bootloader (Inferred):
+
+- **Magic word and reset** (handler at `0x00014824`; which dispatcher branch reaches it for the packet above is not yet traced):
      - At `0x00014832`:
        ```asm
        0x14832: ldr r0, [pc, #0x2fc] ; r0 = 0x2003FFFC (Top 4 bytes of 256 KB SRAM)

@@ -127,7 +127,7 @@ class MockDevice:
 
     def on_set(self, f):
         if self.mode == "app":
-            if f[3] == 0x02 and f[6] == 0xB0 and self.honor_entry:
+            if f[3] == 0x01 and f[6] == 0xB0 and not any(f[4:6]) and self.honor_entry:
                 self.mode = "bl"
                 raise OSError(errno.EPIPE, "reset")
             if f[5] == 0x81:

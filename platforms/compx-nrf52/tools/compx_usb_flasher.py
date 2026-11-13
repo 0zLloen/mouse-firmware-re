@@ -16,12 +16,14 @@ Implements the C52840Dongle USB HID Feature-report ISP protocol from FirmwareUpd
                5. Exit
              An interruption before step 4 leaves 0x6000 erased, so the bootloader stays
              resident. flash does not compare against a reference image before erasing.
-  dump       read-only backup: enter the bootloader and save flash (default 0x6000..0xFFFFF,
-             including the pairing/calibration pages) to an Intel HEX file; run it first.
+  dump       read-only backup: enter the bootloader and save flash from 0x6000 up to where
+             VerifyByAddress is refused (0x4D800 on a retail Series One Pro, so the pairing and
+             calibration pages at 0x88000+ are NOT covered) to an Intel HEX file; run it first.
 
-The app -> bootloader entry packet (enter_bootloader_from_app) is unverified: if the mouse
-does not re-enumerate as 258a:2103, put it in bootloader mode with the official updater and
-run this tool again (it uses an already-present 258a:2103 directly).
+The app -> bootloader entry packet is the official updater's (see enter_bootloader_from_app) and
+was tested on a retail unit. If the mouse does not re-enumerate as 258a:2103, use the official
+updater or the patched firmware's boot chord, then run this tool again (it uses an
+already-present 258a:2103 directly).
 """
 
 import argparse
@@ -58,7 +60,8 @@ XOR_WIRE_KEY = 0x55  # USB wire only; .hex files are plain
 STATUS_OK = (0xA1, 0x02)
 STATUS_ERR = (0xA2, 0xA3, 0xA4)
 # errnos a SET may return when the device resets/detaches while handling it
-RESET_ERRNOS = (errno.ENODEV, errno.EPIPE, errno.ESHUTDOWN, errno.EPROTO, errno.EIO)
+RESET_ERRNOS = (errno.ENODEV, errno.EPIPE, errno.ESHUTDOWN, errno.EPROTO, errno.EIO, errno.ETIMEDOUT)
+# Seen on a retail Series One Pro (2026-11-13): SetBLDeviceMode -> EPROTO, Exit -> ETIMEDOUT.
 
 
 def find_hidraw_feature_node(target_vid: int, target_pid: int, sysfs: str = "/sys/class/hidraw") -> Path | None:
@@ -175,12 +178,13 @@ def _send_reset_command(dev: CompxHidDevice, req: bytes, what: str) -> None:
 
 def enter_bootloader_from_app(dev: CompxHidDevice) -> None:
     """
-    Unverified app -> bootloader packet (feat[3]=0x02, feat[6]=0xB0, rest 0). The docs record a
-    conflicting layout; neither has been checked against FirmwareUpdate.exe or hardware.
-    The caller detects failure by waiting for 258a:2103.
+    App -> bootloader: "set device mode" (cmd 0x00, length 1) with mode 0xB0. Verified from the IL of
+    FirmwareUpdate.exe 1.0.8229.18185 (C52840Dongle::SetBLDeviceMode): buf[3]=deviceID (0 for the
+    wired mouse, Config.ini [Debug] DeviceID), buf[4]=0x01, buf[7]=0xB0, rest 0; buf[0] is the
+    report ID, so feat[i] = buf[i+1]. The caller detects failure by waiting for 258a:2103.
     """
     req = bytearray(64)
-    req[3], req[6] = 0x02, 0xB0
+    req[3], req[6] = 0x01, 0xB0
     _send_reset_command(dev, bytes(req), "SetBLDeviceMode")
 
 
@@ -279,7 +283,7 @@ def enter_bootloader() -> Path:
         return wait_for_device(VID_SINOWEALTH, PID_MOUSE_BL, timeout_s=10.0)
     except TimeoutError:
         raise RuntimeError(
-            "Mouse did not re-enumerate as 258a:2103. The entry packet is unverified: enter the "
+            "Mouse did not re-enumerate as 258a:2103. Enter the "
             "bootloader with the official updater, then run this command again."
         ) from None
 

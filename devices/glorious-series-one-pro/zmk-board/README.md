@@ -24,7 +24,7 @@ From a ZMK main west workspace (or the `zmkfirmware/zmk-build-arm:4.1` container
 
 ```bash
 west build -s app -b glorious_series_one_pro -- -DBOARD_ROOT=/path/to/zmk-board
-arm-zephyr-eabi-nm build/zephyr/zmk.elf | grep -E 'glorious_enter_compx_bootloader|glorious_boot_chord_recovery_check|compx_bl_api'
+readelf -sW build/zephyr/zmk.elf | grep -E 'glorious_enter_compx_bootloader|glorious_boot_chord_recovery_check|compx_bl_api'
 python3 /path/to/platforms/compx-nrf52/tools/compx_hex_tool.py audit build/zephyr/zmk.hex
 ```
 

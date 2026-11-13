@@ -14,10 +14,10 @@ Findings use the labels defined in the repository `README.md`: **Verified** (obs
 
 | Mode / Component | USB VID:PID | USB Revision (`bcdDevice`) | Product String | Evidence Status |
 | :--- | :--- | :--- | :--- | :--- |
-| **Wired Mouse (Application)** | `258a:2018` | `0x0101` (`1.01`) | `Series One PRO` | **Verified** (Linux USB + `FirmwareUpdate.exe` + `mouse_fw.bin` @ `0x00018E3C`) |
+| **Wired Mouse (Application)** | `258a:2018` | `0x0101` (`1.01`) | `Series One PRO Wireless` | **Verified** (sysfs `product` and `lsusb` on a retail mouse, wired, 2026-11-12; the same string as the receiver) |
 | **Wireless 2.4 GHz Receiver (Application)** | `258a:2031` | `0x0100` (`1.00`) | `Series One PRO Wireless` | **Verified** (Live Linux `lsusb` Bus 001 Dev 036 + `receiver_fw.bin` @ `0x0000D0DC`) |
-| **Wired Mouse (Bootloader)** | `258a:2103` | `0x0100` | Compx USB HID Bootloader | **Verified** (`FirmwareUpdate.exe` CIL `Form1::InitDevice` & `OnTimer_ConnectDevice`) |
-| **Wireless Receiver (Bootloader)** | `258a:2113` | `0x0100` | Compx USB HID Dongle Bootloader | **Verified** (`FirmwareUpdate.exe` CIL `Form1::InitDevice`) |
+| **Wired Mouse (Bootloader)** | `258a:2103` | Unknown (not recorded) | `Glorious bootloader` (manufacturer `Glorious`) | **Verified** (`lsusb` after `compx_usb_flasher.py dump` sent the updater's SetBLDeviceMode packet, retail mouse, 2026-11-13) |
+| **Wireless Receiver (Bootloader)** | `258a:2113` | Unknown | Unknown | **Inferred** (PID constant in `FirmwareUpdate.exe` CIL `Form1::InitDevice`; not yet seen on USB) |
 
 - **USB Vendor ID `0x258a`**: Sino Wealth / Compx Technology OEM ID used across Glorious Classic (`glorious-classic`) mice.
 - **Manufacturer String**: `"Glorious"` (UTF-16LE / ASCII in `CM2856_Mouse_USB_v1.00.00_20220810.hex` at `0x00019BA0` and `CM2856_Receiver_USB_v1.00.00_20220810.hex` at `0x0000D790`).
@@ -37,9 +37,9 @@ Passive inspection of `/sys/class/hidraw/hidraw4..6/device/report_descriptor` on
      - Byte `6`: Horizontal Tilt / AC Pan (`int8`, `-127..127`)
      - Byte `7`: Vendor padding byte (`uint8`)
 
-2. **Interface 1 (`input1` / `hidraw5`) — Consumer, System Control, 6KRO Keyboard & Vendor Notifications (147 bytes)**
-   - **Raw Descriptor**:
-     `050c0901a101850119002a3c021500263c02950175108100c005010980a1018502198129831500250175019503810295058101c005010906a1018503050719e029e71500250175019508810295017508810195067508150026ff00050719002aff008100c006a0ff0901a10185040901150026ff00750895088100c006ffff0901a10185050902150026ff00750895088102c0`
+2. **Interface 1 (`input1` / `hidraw5`) — Consumer, System Control, 6KRO Keyboard (with LED output report) & Vendor Notifications (163 bytes)**
+   - **Raw Descriptor** (re-read from sysfs on a retail mouse on firmware v1.0.0.0, 2026-11-13; an earlier 147-byte capture here lacked the keyboard LED output report):
+     `050c0901a101850119002a3c021500263c02950175108100c005010980a1018502198129831500250175019503810295058101c005010906a1018503050719e029e71500250175019508810295017508810395057501050819012905910295017503910395067508150025650507190029658100c006a0ff0901a10185040901150026ff00750895088102c006ffff0901a10185050901150026ff00750895088102c0`
    - **Report IDs**:
      - `0x01`: Consumer Control (16-bit usage `0x0000..0x023C`)
      - `0x02`: System Control (Power/Sleep/Wake)
