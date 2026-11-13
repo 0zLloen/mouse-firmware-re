@@ -65,7 +65,11 @@ def test_hex_tool():
     ok = lambda b, base=BASE, app=BASE: hx.audit_binary_safety(b, base, app)["all_passed"]  # noqa: E731
     assert ok(img)
     assert not ok(img, base=0x7000)  # vector table not at the mouse app base
-    assert ok(make_image(reset=0x7201), base=0x7000, app=hx.RECEIVER_APP_BASE)
+    try:
+        ok(make_image(reset=0x7201), base=0x7000, app=hx.RECEIVER_APP_BASE)
+        raise AssertionError("receiver audit must refuse: its limits are unknown")
+    except ValueError:
+        pass
     assert not ok(make_image(sp=0x20000000))
     assert not ok(make_image(sp=0x20008004))
     assert not ok(make_image(reset=BASE + 1))  # inside the vector table
@@ -93,14 +97,16 @@ def test_hex_tool():
 class MockDevice:
     """
     Compx mouse in app (258a:2018) or bootloader (258a:2103) mode, at the ioctl level, modelled on a
-    retail Series One Pro (2026-11-13): Erase clears only 0x1E000 and up, Program is read-modify-write.
+    retail Series One Pro (2026-11-13): GetBLFW b0 01 00 00; Erase keeps 0x6000..0x1DFFF and 0x7E000 up
+    (0x4D800..0x7DFFF is unreadable, assumed erased); VerifyByAddress answers 0xA2 from 0x4D800 up;
+    Program is read-modify-write.
     """
 
-    def __init__(self, mode="bl", old=b"", die_after=None, glitch_on=None, honor_entry=True):
+    def __init__(self, mode="bl", old=b"", die_after=None, glitch_on=None, honor_entry=True, blfw=b"\xB0\x01\x00\x00"):
         self.mode, self.flash = mode, bytearray(b"\xFF" * 0x100000)
         self.flash[BASE : BASE + len(old)] = old
-        self.die_after, self.glitch_on, self.honor_entry = die_after, glitch_on, honor_entry
-        self.programs, self.ioctls, self.resp, self.clock = [], 0, bytes(64), 0.0
+        self.die_after, self.glitch_on, self.honor_entry, self.blfw = die_after, glitch_on, honor_entry, blfw
+        self.programs, self.ops, self.ioctls, self.resp, self.clock = [], [], 0, bytes(64), 0.0
 
     def node(self, _vid, pid):
         return {("app", 0x2018): Path("/dev/mock-app"), ("bl", 0x2103): Path("/dev/mock-bl")}.get((self.mode, pid))
@@ -122,9 +128,9 @@ class MockDevice:
         self.on_set(bytes(buf[1:]))
         return 0
 
-    def ok(self, payload=b""):
+    def ok(self, payload=b"", status=0xA1):
         r = bytearray(64)
-        r[0] = 0xA1
+        r[0] = status
         r[11 : 11 + len(payload)] = payload
         self.resp = bytes(r)
 
@@ -140,12 +146,13 @@ class MockDevice:
             return
         assert f[4] == 0xB0
         op, n, addr = f[5], f[6], struct.unpack_from(">I", f, 7)[0]
+        self.ops.append(op)
         if op == 0x80:
             r = bytearray(64)
-            r[0], r[8:12] = 0xA1, b"\xB0\x01\x00\x00"
+            r[0], r[8:12] = 0xA1, self.blfw
             self.resp = bytes(r)
         elif op == 0x01:
-            self.flash[0x1E000:0x80000] = b"\xFF" * (0x80000 - 0x1E000)  # the old image stays
+            self.flash[0x1E000:0x7E000] = b"\xFF" * (0x7E000 - 0x1E000)  # the old image head and 0x7E000 stay
             self.ok()
         elif op == 0x02:
             if self.die_after is not None and len(self.programs) == self.die_after:
@@ -158,7 +165,10 @@ class MockDevice:
             if len(self.programs) == self.glitch_on:
                 raise OSError(errno.ETIMEDOUT, "status stage timeout")
         elif op == 0x83:
-            self.ok(bytes(b ^ 0x55 for b in self.flash[addr : addr + n]))
+            if addr >= 0x4D800:  # the hardware limit (verified 2026-11-13), not fl.READ_TOP
+                self.ok(status=0xA2)
+            else:
+                self.ok(bytes(b ^ 0x55 for b in self.flash[addr : addr + n]))
         elif op == 0x04:
             self.mode = "app"
             raise OSError(errno.EPIPE, "reset")
@@ -189,14 +199,35 @@ def test_flasher(tmp: Path):
     old = make_image(size=0x3000, sp=0x2000AF50)
 
     m = MockDevice(mode="app", old=old).install()
+    m.flash[0x7E000:0x7E020] = bytes(range(32))  # the patch's saved profile page
     assert run(fl.cmd_flash, firmware_hex=str(good)) == 0
     assert m.mode == "app" and m.flash[BASE : BASE + len(padded)] == padded
+    assert m.flash[0x7E000:0x7E020] == bytes(range(32)), "Erase must not reach 0x7E000"
     assert m.programs[:2] == [BASE, BASE + 32] and m.programs[-1] == BASE, "blank 0x6000 first, vector table last"
     assert len(m.programs) == len(padded) // 32 + 1 and len(set(m.programs)) == len(padded) // 32
 
     m = MockDevice(mode="bl", old=old, die_after=40).install()
     assert isinstance(run(fl.cmd_flash, firmware_hex=str(good)), OSError)
     assert m.flash[BASE : BASE + 32] == b"\xFF" * 32, "interrupted flash must leave 0x6000 blank (Erase keeps it)"
+    m = MockDevice(mode="bl", old=old, die_after=0).install()
+    assert isinstance(run(fl.cmd_flash, firmware_hex=str(good)), OSError)
+    assert m.flash[BASE : BASE + 32] == old[:32], "before the 0xFF write the old vector table is still there"
+
+    big = tmp / "big.hex"
+    big.write_text(hx.encode_compx_hex(make_image(size=fl.READ_TOP - BASE + 32), BASE))
+    m = MockDevice(mode="bl").install()
+    err = run(fl.cmd_flash, firmware_hex=str(big))
+    assert isinstance(err, RuntimeError) and "read back" in str(err) and m.ioctls == 0
+    big.write_text(hx.encode_compx_hex(make_image(size=fl.READ_TOP - BASE), BASE))
+    m = MockDevice(mode="bl").install()
+    assert run(fl.cmd_flash, firmware_hex=str(big)) == 0, "an image ending exactly at 0x4D800 is readable"
+
+    m = MockDevice(mode="bl", old=old, blfw=b"\xB0\x02\x00\x00").install()
+    err = run(fl.cmd_flash, firmware_hex=str(good))
+    assert isinstance(err, RuntimeError) and "untested bootloader" in str(err)
+    assert m.ops == [0x80], "an untested bootloader gets nothing but GetBLFW"
+    assert run(fl.cmd_dump, out=str(tmp / "exit.hex"), start=BASE, end=0x6020, stay_in_bl=False) == 0
+    assert m.mode == "app" and 0x02 not in m.ops, "the way out the refusal names: read 32 bytes, then Exit"
 
     m = MockDevice(mode="bl", glitch_on=5).install()
     assert run(fl.cmd_flash, firmware_hex=str(good)) == 0
@@ -222,11 +253,10 @@ def test_flasher(tmp: Path):
     assert isinstance(err, RuntimeError) and "official updater" in str(err)
 
     m = MockDevice(mode="app", old=old).install()
-    m.flash[0x88000:0x88020] = bytes(range(32))  # pairing page must be captured
     out = tmp / "backup.hex"
     assert run(fl.cmd_dump, out=str(out), start=BASE, end=0x100000, stay_in_bl=False) == 0 and m.mode == "app"
-    data, lo, *_ = hx.parse_compx_hex(out)
-    assert lo == BASE and data == bytes(m.flash[BASE:0x100000]), "dump must equal flash"
+    data, lo, hi, *_ = hx.parse_compx_hex(out)
+    assert (lo, hi) == (BASE, fl.READ_TOP) and data == bytes(m.flash[BASE:hi]), "dump stops where reads are refused"
     assert isinstance(run(fl.cmd_dump, out=str(out), start=BASE, end=0x100000, stay_in_bl=False), ValueError)
     assert not any(m.programs), "dump must never program"
 

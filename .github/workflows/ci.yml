@@ -30,6 +30,9 @@ jobs:
       - name: Compx tool tests (offline, mock bootloader)
         run: python3 platforms/compx-nrf52/tools/test_tools.py
 
+      - name: RE scripts compile (not run, they need vendor images or hardware)
+        run: python3 -m py_compile devices/*/re-scripts/*.py
+
       - name: device.yaml schema
         run: |
           for d in devices/*/; do [ -f "${d}device.yaml" ] || { echo "::error::${d} has no device.yaml"; exit 1; }; done

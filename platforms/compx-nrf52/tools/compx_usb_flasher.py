@@ -9,23 +9,27 @@ Implements the C52840Dongle USB HID Feature-report ISP protocol from FirmwareUpd
              VerifyByAddress (0x83) and compare. Sends Exit only on a full match; on a
              mismatch or error the mouse stays in the bootloader and the exit code is 1.
   flash      program an Intel HEX image whose lowest address is 0x6000:
-               1. offline safety audit (compx_hex_tool.audit_binary_safety)
-               2. Erase, then write 0xFF to 0x6000 and confirm it reads back erased
-               3. program and verify everything except the first 32-byte block
-               4. program and verify the vector-table block at 0x6000 last
-               5. Exit
-             An interruption before step 4 leaves 0xFF at 0x6000 instead of a half-written
-             vector table (whether the bootloader then stays resident by itself is unknown:
-             its code has never been read). flash does not compare against a reference
-             image before erasing.
+               1. offline checks: the safety audit (compx_hex_tool.audit_binary_safety), and the
+                  image must end at or below 0x4D800, the top VerifyByAddress can read back
+               2. refuse unless GetBLFW is b0 01 00 00, the only bootloader tested
+               3. Erase, then write 0xFF to 0x6000 and confirm it reads back erased
+               4. program and verify everything except the first 32-byte block
+               5. program and verify the vector-table block at 0x6000 last
+               6. Exit
+             Erase keeps 0x6000..0x1DFFF. An interruption between Erase and the 0xFF write
+             leaves the old vector table: the old image stays bootable only if it ended below
+             0x1E000 (stock, the open-directional-dpi patch); a larger one would boot with its
+             tail erased. After the 0xFF write, 0x6000 reads 0xFF until step 5, and whether the
+             bootloader then stays resident is unknown (its code has never been read). flash
+             does not compare against a reference image before erasing.
   dump       read-only backup: enter the bootloader and save flash from 0x6000 up to where
              VerifyByAddress is refused (0x4D800 on a retail Series One Pro, so the pairing and
              calibration pages at 0x88000+ are NOT covered) to an Intel HEX file; run it first.
 
 The app -> bootloader entry packet is the official updater's (see enter_bootloader_from_app) and
 was tested on a retail unit. If the mouse does not re-enumerate as 258a:2103, use the official
-updater or the patched firmware's boot chord, then run this tool again (it uses an
-already-present 258a:2103 directly).
+updater or the patched firmware's boot chord (untested on hardware), then run this tool
+again (it uses an already-present 258a:2103 directly).
 """
 
 import argparse
@@ -57,6 +61,8 @@ PID_MOUSE_BL = 0x2103
 
 APP_BASE_ADDR = compx_hex_tool.MOUSE_APP_BASE
 FLASH_END = 0x00100000  # nRF52840: 1 MiB
+READ_TOP = 0x0004D800  # VerifyByAddress answers 0xA2 from here up (retail Series One Pro, 2026-11-13)
+TESTED_BL_VERSION = bytes.fromhex("b0010000")  # GetBLFW of the only bootloader flashed so far (2026-11-13)
 BLOCK = 32
 XOR_WIRE_KEY = 0x55  # USB wire only; .hex files are plain
 STATUS_OK = (0xA1, 0x02)
@@ -228,8 +234,8 @@ def bl_erase_app(bl: CompxHidDevice) -> None:
 
 def invalidate_vector_table(bl: CompxHidDevice) -> None:
     """
-    Make 0x6000 read 0xFF before anything else is written, so an interrupted flash leaves no valid
-    vector table. Program is read-modify-write on this bootloader (verified on a retail unit:
+    Make 0x6000 read 0xFF before anything else is written, so an interruption from here on leaves
+    no valid vector table. Program is read-modify-write on this bootloader (verified on a retail unit:
     a 32-byte write lands exactly and the rest of the page is kept), so writing 0xFF blanks the block.
     """
     bl_program_32(bl, APP_BASE_ADDR, b"\xFF" * BLOCK)
@@ -367,12 +373,23 @@ def cmd_flash(args) -> int:
     if not audit["all_passed"]:
         failed = [k for k, v in audit["checks"].items() if not v]
         raise RuntimeError(f"Refusing to flash: safety audit failed: {failed}")
+    end = APP_BASE_ADDR + len(image)
+    if end > READ_TOP:
+        raise RuntimeError(f"Refusing to flash: image ends at 0x{end:08X}, above 0x{READ_TOP:08X}; "
+                           "it cannot be read back over USB")
     print(f"[AUDIT] {Path(args.firmware_hex).name}: {len(image)} bytes, SHA256={audit['sha256'][:16]}..., all checks passed")
 
     bl_node = enter_bootloader()
     print(f"[FLASH] Bootloader at {bl_node}")
     with CompxHidDevice(bl_node) as bl:
-        print(f"        GetBLFW: {bl_get_version(bl).hex()}")
+        blfw = bl_get_version(bl)
+        print(f"        GetBLFW: {blfw.hex()}")
+        if blfw != TESTED_BL_VERSION:
+            raise RuntimeError(f"Refusing to flash: untested bootloader (GetBLFW {blfw.hex()}, tested "
+                               f"{TESTED_BL_VERSION.hex()}); nothing was erased or written. The mouse stays in "
+                               "its bootloader (258a:2103); to return to the application, run the official "
+                               "updater, or `compx_usb_flasher.py dump --out exit.hex --end 0x6020` (reads 32 "
+                               "bytes, then sends Exit)")
 
         print("[1/4] Erase (extent defined by the bootloader), then blank the vector table...")
         bl_erase_app(bl)
@@ -437,13 +454,13 @@ def cmd_dump(args) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Compx nRF52840 mouse USB HID bootloader tool (Linux hidraw)")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("probe", help="Read-only probe of the connected mouse")
     p = sub.add_parser("verify-bl", help="Enter bootloader, read back and compare the full reference image")
     p.add_argument("--reference-hex", required=True, help="Reference Intel HEX (lowest address 0x6000)")
     p.add_argument("--stay-in-bl", action="store_true", help="Do not send Exit even on a full match")
-    p = sub.add_parser("flash", help="Program and verify an Intel HEX image (lowest address 0x6000)")
+    p = sub.add_parser("flash", help="Program and verify an Intel HEX image (0x6000 up to at most 0x4D800)")
     p.add_argument("--firmware-hex", required=True, help="Intel HEX to flash, e.g. the vendor .hex for rollback")
     p = sub.add_parser("dump", help="Read-only backup of flash (default 0x6000..0xFFFFF) to an Intel HEX file")
     p.add_argument("--out", required=True, help="Output .hex (never overwritten)")
