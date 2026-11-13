@@ -85,6 +85,15 @@ Addresses are in `CM2856_Mouse_USB_v1.00.00_20220810.hex` and **Inferred** from 
 - TX: `0x00015D74` sends the reply in 8-byte chunks and re-reads its length, `body[3] + 6`, for every chunk (`0x00015D8C`, `0x00015DB4`). With `body[3] > 0x3A` stock sends more than 64 bytes, and the extra bytes come from the staging area at `0x20004F68`. An open-directional-dpi reply keeps its status (`0xA1`..`0xA4`) in `body[3]`, so it would always overrun. The open-directional-dpi patch replaces both length reads with a 64-byte cap.
 - **Verified** round trips through the receiver (2026-11-13): stock version query, and the open-directional-dpi requests and replies with the patch flashed ([`receiver.md`](receiver.md) section 3).
 
+**Radio idle, link loss and sleep (mouse side).** **Inferred** from disassembly and a Unicorn model that runs the real radio and timer interrupt handlers against a scripted receiver (2026-11-13). Nothing here was checked on hardware.
+
+- Linked with nothing to send, the mouse sends a 2-byte keep-alive `[02, uplink seq, downlink seq]` every 1 ms (every second 500 us `TIMER0` slot), with no time limit: radio state 7, `0x000188E0`–`0x0001897A`. In emulation: 2,999 packets in 3 s of idle, 1,000 us apart.
+- Downlink data only arrives as the payload of the receiver's ACK to an uplink packet: the RX ring is written only in radio state 9, the receive window after the mouse's own TX (`0x00016044`–`0x00016084`). The keep-alives are enough to carry it: in emulation a relayed version query reached a still mouse and its 16-byte reply was back within about 6 ms. While a reply is pending the mouse sends in every 500 us slot.
+- A CRC error on the ACK in state 9 returns to state 7 (`0x000160D6` → `0x000160DC`). The receiver-polling states 10–12 are reached only from pairing state 3 (`0x00015F3E`).
+- When ACKs stop, the mouse retries every 1 ms and hops channels. After 32 hop rounds (about 256 ms) it drops the link (`0x000188C4`–`0x000188D0`) and searches with 5-byte connect requests on 3 pairing channels (states 4–6) until the receiver answers.
+- Sleep is System OFF, not a radio idle mode. A 1 s app timer (handler `0x0000AB44`) counts seconds without a report in `0x20003048` while the config u16 at `0x200038CB` is not `0xFFFF` (factory value 420 s; `0xFFFF` = never). Any report while linked zeroes the count (`0x00014D0C`). The mouse powers off when the count passes that value, at 0 % battery (`0x0000E30E`), or 1–2 s after a type-4 "sleep" downlink record (`0x000133A4`), which the receiver sends when the host suspends it ([`receiver.md`](receiver.md) section 3).
+- The sleep path `0x0000AB98` / `0x0000ABC4` stops the radio, `TIMER0` and `TIMER1`, arms GPIO sense on the six buttons, the motion pin and both wheel pins (`0x0000ABF6`–`0x0000AC68`), then enters System OFF. Only a button, the wheel or sensor motion wakes it, and waking is a reset, a reboot and a reconnect. A host request cannot wake it: the receiver can only talk to the mouse in ACKs to the mouse's own packets.
+
 ---
 
 ## 3. Physical Hardware & PCB Teardown Verification
@@ -162,12 +171,10 @@ Disassembly of `0x0001708C`–`0x00018558` in `CM2856_Mouse_USB_v1.00.00_2022081
        - `burst[10..11]`: `SHUTTER_UPPER` / `SHUTTER_LOWER`
 
 3. **DPI Resolution & Register Programming (`0x00017860`–`0x00017960`)**:
-   - For **`50 <= DPI <= 10,000`**:
-     - Writes `0x50` to register `0x4D` (sets 50 CPI step mode).
-     - Computes `step = (DPI / 50) - 1` and writes `step` to register `0x4E` (`RESOLUTION_X`) and `0x4F` (`RESOLUTION_Y` when independent X/Y is enabled by setting bit 2 of `0x4D`).
-   - For **`10,100 <= DPI <= 19,000`**:
-     - Writes `0xD0` to register `0x4D` (sets 100 CPI step mode).
-     - Computes `step = (DPI / 100) - 1` and writes `step` to register `0x4E` / `0x4F`.
+   - `0x17860` takes the DPI X in `r0` and ignores `r1` (Y). It writes `0xD0` to register `0x4D` (100 CPI steps) when `10,100 <= DPI <= 19,000` (test at `0x17864`–`0x17870`), otherwise `0x50` (50 CPI steps).
+   - It then writes `uxtb(DPI / step - 1)` to `0x4E` (`RESOLUTION_X`), then `0x56` and `0x5A`, and clears `0x20003016` / `0x20003018`. It never writes `0x4F`. The only other bank-0 writes to `0x4D`..`0x4F` are the power-up table in `0x170E8` (`0x171C2`–`0x171D2`: `0x4D = 0x50`, `0x4E = 0x3B`, `0x4F = 0x46`), run only by the sensor init `0x19584`, which then tail-calls `0x17860` (`0x195AA`). (Corrected 2026-11-13: this item said `0x4F` is written too; a scan of all 216 register writes through `0x184B4` and Unicorn show it is not.)
+   - Out of range: DPI `0` writes `0x4E = 0xFF` (12,800 CPI) and DPI 20,000 writes `0x4E = 0x8F` (7,200 CPI). The DPI-adjust wheel can reach `0` (`0xA58A`–`0xA5A0`) and stops at 16,000; only a host can send more. In Unicorn, `0x17860(400)` wrote `0x4D = 0x50`, `0x4E = 0x07`, `0x56 = 0x04`, `0x5A = 0x10`.
+   - Callers (10): the DPI stage buttons (`0xA652`, `0xA6E0`, `0xA7C4`), DPI shift press (`0xA74A`), DPI shift release and the DPI-adjust wheel (`0xA752`), host DPI commands 1/2/3 when the target profile is active (`0x15388`, `0x154A8`, `0x15556`), profile apply (`0x18790`) and the sensor init (`0x195AA`, a `b.w` passing `P+0x2B`). The sensor init `0x19584` runs at boot (`0xE8A0`) and from the health check `0x99E0` (main loop `0xE8E4`), which re-inits the sensor every 3000 ticks when the burst observation byte `0x20003021` is not `0xB7` or `0xBF`.
    - **High-DPI Gain Adjustment (`0x178EC`)**:
      - Writes `0x90` to register `0x5A` when `DPI >= 5,000`, or `0x10` when `DPI < 5,000`.
    - **Angle Snapping (`0x17924`)**:
@@ -185,14 +192,22 @@ From two independent disassembly passes over `CM2856_Mouse_USB_v1.00.00_20220810
 | :--- | :--- | :--- |
 | `0x200038C8` | `0x266` bytes | RAM copy of the active profile config page (flash `0x8B000`, or the factory defaults at `0x1A3B8` when its length or CRC check fails, `0xD4A0`) |
 | `0x200038CF` | `u8` | Active profile, 0-based (`0..2`); profile base `P = 0x200038C8 + 200 * profile` |
+| `0x200038D0` | `u8` | Profile count (factory 3; section 4.3) |
 | `P+0x2B` / `P+0x2D` | `u16` LE | Current DPI X / Y (persisted copy) |
 | `P+0x30` / `P+0x31` | `u8` | Stage count (max 6) / stage index (0-based) |
 | `P+0x32+4i` / `P+0x34+4i` | `u16` LE | Stage `i` X / Y DPI |
 | `0x20004CE4` | 27 bytes | RAM copy of `P+0x2F..`; the stage index is at `0x20004CE6` |
-| **`0x20003068`** / `0x2000306A` | `u16` | **Live DPI X / Y in DPI units.** Written by every DPI path (DPI button, host HID over USB and 2.4 GHz, boot, profile switch) before the sensor is programmed at `0x17860`, which uses X only (`0x4D`/`0x4E`: 50-DPI steps below 10,100 DPI, 100-DPI steps up to 19,000). |
+| `P+0x5C` | 120 bytes | Button map: 8 slots of 15 bytes. Slot byte `0` is the button code (`01`..`05` = Left / Right / Middle / Back / Forward, `0x14` = DPI, `0x10` / `0x11` = wheel); layer `L` (`0`, `1`) is the 7-byte action at `+1+7L`: `f0` type, `f1` not read by the dispatcher, `f2` sub-function, `f3..f6` parameters |
+| `0x20004B30` | 120 bytes | RAM copy of the active profile's button map (copied at `0x187AC`, `0x145FE` and in the config load); button actions read it |
+| **`0x20003068`** / `0x2000306A` | `u16` | **Live DPI X / Y in DPI units**, as stock tracks it; not always the DPI the sensor runs at. Written by the DPI stage buttons, the DPI-adjust wheel and a profile switch (`0x18754`) just before they call `0x17860`, and by the host DPI commands just after it; `0x17860` uses X only. Not written by DPI shift (`0xA74A` / `0xA752`) or by the sensor init `0x19584`, which programs `P+0x2B`. Host DPI commands 1 and 2 aimed at an inactive profile write it without programming the sensor (below). (Corrected 2026-11-13: this row said every DPI path writes it.) |
 
 - **Verified on hardware (2026-11-13):** the open-directional-dpi patch reads `0x20003068` on every sensor burst. Cycling the DPI button on a retail mouse reported 400 → 800 → 1600 → 3200 (that unit's stages), three times in a row.
-- A held DPI-shift ("sniper") key programs the sensor without updating `0x20003068`.
+- **DPI shift** ("sniper") is a button action, not a fixed key: type 7 sub-function 5, with the shift DPI X and Y big-endian in `f3..f4` and `f5..f6` of the slot. No button has it in the factory map: slots 0..4 are type 1 mouse buttons 1..5, slot 5 (DPI) is type 7 sub 6 (stage cycle with wrap), slots 6 and 7 the wheel.
+- Path: the GPIO scan (`0x16B84`–`0x16C96`) calls `0x14244(state, index)` (`1` press, `0` release, `2` long hold), which picks the layer and calls the action dispatcher `0xA450`. Press: `0x17860(shift X)` at `0xA74A`. Release: `0x17860` at `0xA752` with the `0x20003068` value read at `0xA494`. A long hold writes no DPI. In Unicorn (slot 3, layer 0 set to `07 01 05 01 90 01 90`): press gave sensor 400 with `0x20003068` still 1200, release gave 1200.
+- So a held DPI shift programs the sensor without updating `0x20003068`. No RAM variable holds a shift flag or the programmed DPI (Unicorn write trace of a press and a release). While shift is held, any other DPI write (DPI button, wheel, host command, the `0x19584` re-init) overrides it until the next press.
+- Host DPI commands 1 (set stages) and 2 (set stage index) aimed at a profile that is not active write that profile's current-stage DPI into `0x20003068` and into the active profile's `P+0x2B` / `P+0x2D`, but do not program the sensor (`0x153A6`–`0x153F4`, `0x154E8`–`0x15522`; Unicorn). Whether Glorious Core ever sends them for an inactive profile is **Unknown**.
+- open-directional-dpi builds after `56afbb4` therefore record the DPI inside `0x17860` (a `bl` at `0x17864`), which covers all 10 callers; `21ea252` and main `56afbb4` read `0x20003068`.
+- **Key assignment** (host): command group 3 (`feat[4] = 3`, handler `0x00014540`), `feat[5] = 0x00` to set and `0x80` to get, `feat[6..15]` = profile (1-based), button code, layer, `f0..f6`. A set on the active profile also refreshes `0x20004B30`. In Unicorn, `feat[6..15] = 01 04 00 07 01 05 01 90 01 90` gave Back a 400-DPI shift (reply `0xA1`); pressing it gave 400, releasing it 1200. Not sent to a mouse.
 - The stage index is not a reliable stand-in for the DPI. The factory defaults boot at 1200 DPI with index 2, and the DPI-adjust wheel and the host "set DPI" command change the DPI without changing the index.
 
 ### 4.2 Millisecond tick (Inferred from disassembly; rate on the cable Verified, 2026-11-13)
@@ -202,7 +217,19 @@ From two independent disassembly passes over `CM2856_Mouse_USB_v1.00.00_20220810
 - The main loop at `0x00013270` tests `0x2000301A`, clears it and calls the sensor burst `0x0001708C` (`0x00013278`), moving or not. The second burst call (`0x000131D8`) runs only while the motion pin `P0.06` is low.
 - So the sensor is read about once per millisecond.
 - **Verified on the cable (2026-11-13):** open-directional-dpi `21ea252` counts the sensor-burst calls and reports the count in `GET_CAPABILITIES` bytes `20..23`. Read once a second for 12 s with the mouse still, it rose 1000.0 per second. Its idle reset uses this count as its millisecond clock.
-- Over 2.4 GHz it was not measured: while the mouse sends no reports the receiver answers `0xA4`, so the count cannot be read with the mouse still. **Inferred** the same (same `TIMER1` tick).
+- Over 2.4 GHz it was not measured: relayed requests failed while the mouse was still ([`receiver.md`](receiver.md) section 3). **Inferred** the same: the only `TIMER1` task writes found by literal search are the init `0x00018B3C`, captures at `0x000131D4` / `0x0001327E`, a `TASKS_CLEAR` at `0x00015FEE` on each connect, and `STOP` / `SHUTDOWN` in `0x00018B8C`, whose only caller is the sleep path (`0x0000ABE2`). The IRQ handler `0x00006C00` only clears its events; the timer instance table at `0x0000AFCC` was not traced. So it runs while linked, retrying and searching, and stops only on the way into System OFF (section 2.3); a reconnect makes at most one tick late. The burst at `0x00013278` depends only on the tick flag. In the radio emulation the tick counted 3,000 ms in 3 s of idle.
+
+### 4.3 Onboard profiles (Inferred from disassembly and Unicorn emulation, 2026-11-13; nothing checked on hardware)
+
+- Three profiles in the config page (section 4.1): count `0x200038D0` (factory 3), active index `0x200038CF`. Factory profiles: DPI 1200 / 1600 / 3200, stages 400 / 800 / 1600 / 3200 in each.
+- Only two code paths (three `strb` instructions) store the active index: button action type 8 (`0x0000AA2C` / `0x0000AA3C` in `0xA450`) and host group 0 command `0x05` (`0x00014916`). Boot (`0xD4A0`) and the factory resets (`0x14896`, `0x18C58`) replace it with the whole config.
+- Action type 8 acts on press only: sub 1 next (stops at the last profile), 2 previous (stops at the first), 3 next with wrap, 4 previous with wrap.
+- Host group 0 (`body[4] = 0`): `0x05` with `body[6] = n` (1-based) sets the active index to `n - 1`. It clamps to 2 without checking the count, and `n = 0` writes `0xFF` (a stock bug). `0x85` returns the active profile + 1 in `body[6]`; `0x86` returns the count and `0x06` sets it (1..3). All answer `0xA1` (emulated on the wired path; through the receiver they should be relayed like any stock command, not run).
+- No default switch: in the factory map no button has action type 8, in any profile or layer. No button combination switches profiles either: all 63 combinations of the six buttons through `0x14244` left the active index unchanged. The combinations L+R+M, L+M+DPI, R+M+DPI, M+Back+DPI and M+Forward+DPI change LED settings (disassembly only).
+- L+R+M held for 5 s (5,000 `TIMER1` ticks) restores the factory config, so the active profile becomes profile 1, and flags a save and reset. Releasing any of the three cancels it (`0x2000305E`).
+- A switch calls `0x00018754` (only from `0xAA44` and `0x1491C`). It sets `0x20003068` / `0x2000306A` from `P+0x2B` / `P+0x2D`, programs the sensor once through `0x17860`, copies the stage table to `0x20004CE4` and the button map to `0x20004B30`, reloads the LED effect from `P+0x11` (`0xDA58`; factory effects 1 / 2 / 5) and clears macro and key state (`0x16A1C`, `0x18638`). The button action (type 8, `0xAA48`–`0xAA5A`) also queues a notification (type 2, value profile + 1, ring `0x20004BA8`; probably input report ID 5); host command `0x05` does not. The LED, macro and notification parts are from disassembly only.
+- The save is deferred: `0x166EC(8)` sets `0x20003001 |= 1` and `0x20003004 = 300`, the `TIMER1` handler counts that down, and then `0x14668` (main loop `0xE8D2`) erases and writes page `0x8B000`, but only while `0x20003048 >= 2` (at least 2 s without a report, section 2.3) or byte `0x20003000` is non-zero (`0x14670`–`0x1467A`). With sleep set to `0xFFFF` the counter does not run (`0xAB4E`), so this gate then depends on `0x20003000` (Inferred). The DPI button uses the same path (`0x166EC(2)`). So with the factory sleep value the active profile should survive a power cycle.
+- Group 3 command `0x80` (section 4.1) is a read-only query of one button's action: `body[6]` profile (1-based), `body[7]` button code, `body[8]` layer; the reply has `f0..` from `body[9]`. A reply with `body[9] = 0x08` means that button switches profiles. In Unicorn, profile 1, code `0x14`, layer 0 returned `07 01 06` and left the config unchanged.
 
 ## 5. Survey of Existing Open-Source Research (Phase A Questions 1–7)
 
