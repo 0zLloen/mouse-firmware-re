@@ -67,6 +67,7 @@ Inspection of the FCC internal photographs (`https://fccid.io/2AXP2SP22`) for th
            | Presumably checks *(u32 *)0x2003FFFC == 0xA55AA55A    |
 0x00006000 +-------------------------------------------------------+
            | Application Firmware Region (480 KiB, ..0x0007DFFF)   |
+           | USB flash/verify limit 0x0004D7FF (0xA2 from 0x4D800) |
            | Stock CM2856_Mouse_USB occupies 0x00006000..0x0001CC8F|
            | Custom ZMK / Patched FW links at 0x00006000           |
 0x0007E000 +-------------------------------------------------------+
@@ -98,16 +99,31 @@ Inspection of the FCC internal photographs (`https://fccid.io/2AXP2SP22`) for th
 - `0x00006000`–`0x0001CC8F` is byte-identical to `CM2856_Mouse_USB_v1.00.00_20220810.hex`.
 - Non-blank data that the official image does not explain sits at `0x0001CD00`–`0x0001D68F` (about 2.4 KB, right after the stock image, where the open-directional-dpi patch links), `0x00036790`–`0x0003688F`, `0x00043790`–`0x00043A8F` and `0x00044790`–`0x00044D8F`. The block at `0x0001CD00` disassembles as Thumb code that starts by reading `NRF_P1->IN` (`0x50000810`), like the open-directional-dpi boot hook: it is an earlier patch build (**Verified**: the unit's owner had flashed one before restoring stock). It survived because `Erase` keeps `0x6000`–`0x1DFFF` and a stock image never writes past `0x1CC8F`. The other three blocks were cleared by the next `Erase` (`0x1E000` and up).
 - The same day the open-directional-dpi patched image (`0x6000`–`0x1D9DF`) was flashed with `compx_usb_flasher.py flash`: `Erase`, `0xFF` written to `0x6000`, everything else programmed and read back, the vector table last, then `Exit`. The mouse booted it: the version reply carries the patch's `DP01` stamp and its configuration protocol answers. Later that day the official `.hex` was restored the same way (read back, booted, no `DP01` stamp) and the patched image flashed again. A profile the patch had saved at `0x7E000` before both flashes was still there afterwards, so `Erase` does not reach `0x7E000`.
+- The build on the mouse since then (open-directional-dpi `505404c`, with the 2.4 GHz relay) programs `0x6000`–`0x1DA5F` (96,864 B, decoded image SHA-256 `0ed3cb4b74d0ab5192f3708c40b25be52912c91876b973d0d8d3b821c17b794a`). The patch's linker region now ends at `0x1E000` (`stock_ddpi_patch.ld`), so a later build cannot grow into the range `Erase` clears without failing the link.
 - The dump is not published (it is unit-specific); its SHA-256 for this unit is `a3b734ce3c5496fb3459a75791af55421facf20af5845313fd82f7ee100e72da`.
 
 ### 4.2 Why Preserving `0x00000000`–`0x00005FFF` and `0x00088000` is Essential
 
 1. **Bootloader (`0x00000000`–`0x00005FFF`)**:
    - The official updater (`CM2856_Mouse_USB_v1.00.00_20220810.hex`) begins at `0x00006000`. It does **not** include the first 24 KB of flash (`0x00000000`–`0x00005FFF`).
-   - However, notice that the bootloader's own `VerifyByAddress` (`0x83`) command accepts a 32-bit address (`buf[8..11]`). If `VerifyByAddress` does not reject addresses `< 0x00006000`, the bootloader (`0x00000000`–`0x00005FFF`) and pairing page (`0x00088000`–`0x00088FFF`) can even be backed up read-only in bootloader mode (`258a:2103`) or via SWD if `APPROTECT` is disabled!
+   - USB reads stop at `0x0004D7FF` (4.1a), so the pairing page cannot be read over USB. Only `0x00000000`–`0x00005FFF` is untried: if `VerifyByAddress` answers below `0x6000`, the bootloader can be backed up without SWD (4.3).
 2. **Radio Pairing Info (`0x00088000`)**:
    - Disassembly of `0x00014700`–`0x00014770` shows that page `0x88` (`0x00088000`) holds the 32-byte system configuration block protected by CRC-16 at offset `+0x1E`, used by the proprietary 2.4 GHz radio stack (`NRF_RADIO` ISR at `0x00006711`) to authenticate with the `258a:2031` wireless receiver.
-   - Keeping custom firmware strictly within `0x00006000`–`0x0007FFFF` guarantees that switching back to `CM2856_Mouse_USB_v1.00.00_20220810.hex` immediately restores wireless receiver pairing without needing to re-pair the dongle.
+   - `Program` never writes it while custom firmware stays within `0x00006000`–`0x0007FFFF`. Whether `Erase` reaches it is **Unknown**; **Inferred** not: the mouse still linked to its receiver after at least five `Erase` runs on 2026-11-13.
+
+### 4.3 What Still Needs SWD
+
+USB read-back covers `0x00006000`–`0x0004D7FF` only (4.1a). Still without a backup or an answer:
+
+| Item | Why | Without SWD? |
+| :--- | :--- | :--- |
+| Bootloader `0x00000000`–`0x00005FFF` | Its code has never been read: whether it clears the magic word, stays resident with `0xFF` at `0x6000`, or validates the image on `Exit` is Unknown. | Maybe. One read-only `VerifyByAddress` at `0x00000000` over USB. `compx_usb_flasher.py` refuses addresses below `0x6000`, so this needs a one-off the owner approves. |
+| `0x0004D800`–`0x000FFFFF`: the `0x7E000` settings page, pairing `0x88000`, profiles `0x8B000`/`0x8C000` | Unit-specific; `VerifyByAddress` answers `0xA2` there. | No. |
+| UICR (`0x10001000`), `APPROTECT` | Decides whether SWD can read anything at all. | No: `APPROTECTSTATUS` over the CTRL-AP (section 5, step 2). |
+| The exact upper bound of `Erase` | Known only up to `0x0004D7FF`, plus "not `0x7E000`". | No: read `0x88000` before and after one `Erase`. |
+| SWD pad order | Inferred from photos (2.2). | Yes: passive continuity check, section 5 step 1. |
+
+SWD stays read-only: `APPROTECTSTATUS` first, never `recover` or `ERASEALL`.
 
 ---
 
@@ -138,4 +154,4 @@ openocd -f interface/cmsis-dap.cfg -c "transport select swd; adapter speed 1000;
     ```
   - **`0x00000000`**: **Readback-protected (`APPROTECT` enabled in UICR).**
     - **DO NOT run `nrf52_recover` or `nrfjprog --recover`!** Unlocking via CTRL-AP `ERASEALL` would erase the 24 KB bootloader (`0x00000000`–`0x00005FFF`) and RF pairing page (`0x00088000`).
-    - Instead, use the **USB HID Bootloader (`258a:2103`)** path documented in `flashing-feasibility.md`. It only programs `0x00006000`+, so the bootloader is never written; whether its `Erase` clears the pairing page is Unknown.
+    - Instead, use the **USB HID Bootloader (`258a:2103`)** path documented in `flashing-feasibility.md`. It only programs `0x00006000`+, so the bootloader is never written; whether its `Erase` clears the pairing page is Unknown (Inferred not, 4.2).

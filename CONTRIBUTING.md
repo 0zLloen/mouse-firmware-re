@@ -2,7 +2,7 @@
 
 This guide is for people who want to find out how their gaming mouse's firmware works (which chip, how it updates, where the bootloader lives, whether it can run open firmware) and add that knowledge here in a form others can build on. You do not need prior firmware experience. You do need patience, a notebook, and the discipline to stop before steps that can brick your mouse.
 
-The worked example is [`devices/glorious-series-one-pro/`](devices/glorious-series-one-pro/): start with its [`device.yaml`](devices/glorious-series-one-pro/device.yaml), then read the Markdown files it lists.
+The worked example is [`devices/glorious-series-one-pro/`](devices/glorious-series-one-pro/): start with its [`README.md`](devices/glorious-series-one-pro/README.md) (status and open questions) and [`device.yaml`](devices/glorious-series-one-pro/device.yaml), then read the Markdown files it lists.
 
 **Contents:** [Ground rules](#ground-rules) · [Evidence rules](#evidence-rules) · [The safety ladder](#the-safety-ladder) · [Submitting](#submitting) · [Review checklist](#review-checklist)
 
@@ -138,9 +138,12 @@ Tips:
 
 - One action per capture, named after it (`read-settings`, `dpi-800-to-1600`, `version-check`). Diffing two captures that differ in one setting is the fastest way to map a protocol.
 - The device address changes when a device re-enumerates (e.g. into its bootloader). During an update, filter by bus, not address.
+- Measure the polling rate from report timestamps in usbmon or hidraw, while the mouse moves. Never from browser pointer events: browsers merge reports (a browser polling test showed 565 Hz for the Glorious mouse, which sends about 1,000 reports/s).
 - Capturing an official update is the best way to learn the bootloader protocol, but the update itself writes flash and may erase unit-specific pages: back up first if step 6 gives you a way to (and record that you could not if it does not), and only do it when the vendor offers it for your mouse, on a direct port with stable power, preferably on bare-metal Windows rather than through VM passthrough.
 
 **Privacy:** usbmon and USBPcap capture *every* device on that bus, including your keyboard. Do not type passwords while capturing, use a bus with only the mouse on it if you can, and **never commit raw captures**. Commit text excerpts of the relevant packets, with serial numbers, Bluetooth/RF addresses and pairing data replaced by `XX`, and say what you redacted.
+
+**Receivers.** A wireless receiver may relay a report to the mouse or answer it itself, depending on a target or routing byte. Find that byte, and list which commands the receiver handles on its own. Treat its own write commands (mode or bootloader entry, pairing ID) like the writes of step 7: one wrong packet can unpair the mouse or put the receiver into its bootloader. [`receiver.md`](devices/glorious-series-one-pro/receiver.md) is the worked example.
 
 **Record:** report IDs, lengths and byte layouts, command bytes, status codes, the order of a transaction, and which capture each comes from.
 
@@ -259,6 +262,7 @@ Use [New device report](https://github.com/0zLloen/mouse-firmware-re/issues/new?
 - Full decompiled vendor source or long disassembly listings. Short excerpts with addresses are fine.
 - Firmware encryption or signing keys found in vendor software.
 - Firmware you built yourself: describe how to build it; CI can build it (the ZMK board in the Glorious folder is built in CI).
+- Images that contain vendor code, such as a patched stock image. Do not attach them to releases, issues or discussions either: describe how to build them from the user's own copy of the official image.
 
 ### Privacy
 

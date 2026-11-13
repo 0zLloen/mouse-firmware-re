@@ -20,8 +20,9 @@ usb:
     vid_pid: "258a:2031"
     bcd_device: "0x0100"
     product: Series One PRO Wireless
+    report_descriptor_lengths: [91, 163, 20]
     evidence: verified
-    source: lsusb -v on a real receiver, 2026-11-12
+    source: lsusb -v on a real receiver, 2026-11-12; descriptor lengths from /sys/class/hidraw/*/device/report_descriptor, 2026-11-13; relaying and local commands in receiver.md
   - role: bootloader
     vid_pid: "258a:2103"
     manufacturer: Glorious
@@ -31,7 +32,7 @@ usb:
   - role: receiver-bootloader
     vid_pid: "258a:2113"
     evidence: inferred
-    source: PID constant in FirmwareUpdate.exe (Form1::InitDevice, C52840Dongle); not yet seen enumerating
+    source: PID constant in FirmwareUpdate.exe (Form1::InitDevice, C52840Dongle) and BLPID = 2113 in the wireless Config.ini; the receiver application enters it on its own command 0x00 with mode 0xB0, storing 0xA55AA55A at 0x20007FFC (CM2856_Receiver_USB_v1.00.00_20220810.hex @ 0x0000C7A8, disassembly; never sent, see receiver.md); not yet seen enumerating
 
 mcu:
   - component: mouse
@@ -40,9 +41,9 @@ mcu:
     evidence: verified
     source: U1 marking in FCC internal photos (https://fccid.io/2AXP2SP22)
   - component: receiver
-    part: Nordic nRF52840
+    part: Nordic nRF52 series with USB (nRF52840 per the updater; its 32 KB RAM use also fits an nRF52820)
     evidence: inferred
-    source: updater class C52840Dongle and the Cortex-M4 vector table at 0x7000 in the receiver .hex; no receiver photo checked
+    source: updater class C52840Dongle and ChipName 00052840 in the wireless Config.ini; the receiver .hex has initial SP 0x200026E0 and its bootloader magic at 0x20007FFC (top of 32 KB) and uses no flash above 0x38FFF; no receiver photo checked
 
 sensor:
   part: PixArt PAW3370 derivative (Glorious BAMF)
@@ -64,7 +65,7 @@ firmware:
     url: https://gloriouscore.nyc3.digitaloceanspaces.com
     inside: v1.0.0.0_20220810_Series_One_ProFirmware.exe > XVI.zip (password XVI)
     evidence: verified
-    source: sha256sum of the extracted file; a mouse on this release answers the 0x00/0x81 version query with a1 00 00 03 00 81 01 00 00 00 20 18 (v1.0.0.0, PID 0x2018), 2026-11-12
+    source: sha256sum of the extracted file; compx_hex_tool.py decode gives 93,328 B at 0x6000, and sha256sum of that .bin is e50510e0eb213e69d62a088d6f5b792fb88b0f3dc56d3c9c21dd0ca8b6e892be, the stock image open-directional-dpi requires (2026-11-13); a mouse on this release answers the 0x00/0x81 version query with a1 00 00 03 00 81 01 00 00 00 20 18 (v1.0.0.0, PID 0x2018), 2026-11-12
   - component: receiver
     version: v1.00.00
     file: CM2856_Receiver_USB_v1.00.00_20220810.hex
@@ -72,7 +73,7 @@ firmware:
     url: https://gloriouscore.nyc3.digitaloceanspaces.com
     inside: v1.0.0.0_20220810_Series_One_ProFirmwareWireless.exe > XVI.zip (password XVI)
     evidence: verified
-    source: sha256sum of the extracted file
+    source: sha256sum of the extracted file; compx_hex_tool.py decode gives 32,260 B at 0x7000, and sha256sum of that .bin is cc356a18a7b8ae6811d431956f9aa48dec25b76bd77b92bb4e1881868faefd44 (2026-11-13)
 
 flash_layout:
   - start: "0x00000000"
@@ -88,15 +89,20 @@ flash_layout:
     source: record addresses of CM2856_Mouse_USB_v1.00.00_20220810.hex; a retail unit's USB read-back of this range matches it byte for byte (2026-11-13)
   - start: "0x00006000"
     end: "0x0007DFFF"
-    name: application partition (repository write limit; custom firmware lives here)
+    name: application partition (compx_hex_tool.py audit limit; custom firmware lives here, and compx_usb_flasher.py writes only up to 0x4D7FF)
     evidence: inferred
-    source: repository convention (flash-layout-and-swd.md 4.1), enforced by compx_hex_tool.py audit
+    source: repository convention (flash-layout-and-swd.md 4.1), enforced by compx_hex_tool.py audit; compx_usb_flasher.py flash also refuses images ending above 0x4D800 (VerifyByAddress answers 0xA2 from there, verified 2026-11-13)
+  - start: "0x0007E000"
+    end: "0x0007FFFF"
+    name: custom-firmware settings (open-directional-dpi saves its profile at 0x7E000; not used by stock)
+    evidence: verified
+    source: a profile saved there by the open-directional-dpi patch read back unchanged after two full flashes with compx_usb_flasher.py, so Erase does not reach it (retail unit, 2026-11-13)
   - start: "0x00088000"
     end: "0x00088FFF"
     name: system config / 2.4 GHz pairing page (32 B + CRC-16)
     preserve: true
     evidence: inferred
-    source: CM2856_Mouse_USB_v1.00.00_20220810.hex @ 0x00014700-0x00014770 (disassembly); not readable over USB (VerifyByAddress refuses 0x0004D800 and up)
+    source: CM2856_Mouse_USB_v1.00.00_20220810.hex @ 0x00014700-0x00014770 (disassembly); not readable over USB (VerifyByAddress refuses 0x0004D800 and up); the mouse still linked to its receiver after at least five Erase runs on 2026-11-13, so Erase probably leaves it (inferred)
   - start: "0x0008B000"
     end: "0x0008CFFF"
     name: active profile (0x8B) and extended config (0x8C) pages
@@ -117,26 +123,39 @@ flash_layout:
     source: lowest address of the official receiver .hex is 0x00007000
   - component: receiver
     start: "0x00007000"
-    end: "0x0001203F"
-    name: stock receiver application image (45,120 B)
+    end: "0x0000EE03"
+    name: stock receiver application image (32,260 B)
     evidence: verified
-    source: record addresses of CM2856_Receiver_USB_v1.00.00_20220810.hex
+    source: record addresses of CM2856_Receiver_USB_v1.00.00_20220810.hex (compx_hex_tool.py decode, 2026-11-13)
+  - component: receiver
+    start: "0x00038000"
+    end: "0x00038FFF"
+    name: receiver config page (0x24 bytes with CRC; RF ID at +2, the pairing with the mouse)
+    preserve: true
+    evidence: inferred
+    source: CM2856_Receiver_USB_v1.00.00_20220810.hex @ 0x000097BC (loads 0x24 bytes from 0x38000) and @ 0x0000C6FC (erases the page and writes them back), disassembly; see receiver.md
 
 bootloader:
   protocol: Compx USB HID ISP, 64-byte Feature reports on interface 2 (usage page 0xFFFF), payload XOR 0x55 on the wire; see platforms/compx-nrf52/bootloader-protocol.md
   entry: Feature report feat[2]=0x00 (deviceID), feat[3]=0x01, feat[6]=0xB0, rest 0 ("set device mode" to 0xB0); the application then writes 0xA55AA55A to SRAM 0x2003FFFC and resets
   evidence: verified
-  source: packet read from FirmwareUpdate.exe 1.0.8229.18185 IL (C52840Dongle::SetBLDeviceMode) and tested on a retail mouse, 2026-11-13; the magic-word path is from CM2856_Mouse_USB_v1.00.00_20220810.hex @ 0x00014832 (disassembly, inferred); Erase clears 0x1E000 and up but keeps 0x6000-0x1DFFF, and Program is read-modify-write (both verified 2026-11-13); Erase does not reach 0x7E000 (a profile saved there survived two full flashes, verified 2026-11-13); whether it reaches 0x88000+ is unknown
+  source: packet read from FirmwareUpdate.exe 1.0.8229.18185 IL (C52840Dongle::SetBLDeviceMode) and tested on a retail mouse, 2026-11-13; the magic-word path is CM2856_Mouse_USB_v1.00.00_20220810.hex @ 0x000151AC (group body[4] = 0) -> 0x00014788 (command body[5] = 0x00) -> 0x00014824 (mode compare) -> 0x0001484C (store) -> 0x000071B8 (reset), disassembly and Unicorn emulation (inferred); Erase clears 0x1E000 and up but keeps 0x6000-0x1DFFF, and Program is read-modify-write (both verified 2026-11-13); Erase does not reach 0x7E000 (a profile saved there survived two full flashes, verified 2026-11-13); whether it reaches 0x88000+ is unknown
 
 recovery:
   - method: re-flash the official .hex through the resident bootloader (official updater or compx_usb_flasher.py flash)
     evidence: verified
     source: compx_usb_flasher.py flash of the official CM2856_Mouse_USB_v1.00.00_20220810.hex on a retail unit, read back and booted (no DP01 stamp afterwards), 2026-11-13; a patched image was flashed the same way before
+  - method: boot chord of the open-directional-dpi patch and the zmk-board image (hold Left + Right + DPI while the MCU comes out of reset, with the battery disconnected or the mouse fully powered down, then connect USB; stock firmware has no chord)
+    evidence: unknown
+    source: implemented (open-directional-dpi stock_ddpi_patch.c, zmk-board bootloader_reentry.c) but untested on hardware, and the three button pins are inferred (hardware.md 3.2); settled by holding the chord on a unit with the patch while it resets and checking that 258a:2103 enumerates
   - method: SWD on unlabelled test pads near U1 (pad order and APPROTECT state not checked)
     evidence: unknown
     source: needs a passive continuity check and a read-only CTRL-AP APPROTECTSTATUS read (flash-layout-and-swd.md section 5)
 
 related_firmware:
+  - name: open-directional-dpi
+    url: https://github.com/0zLloen/open-directional-dpi
+    note: binary patch of the stock CM2856 v1.00.00 image (per-direction sensitivity), flashed and verified on a retail unit 2026-11-13, configurable over the cable and through the 258a:2031 receiver; the only firmware other than stock run on this mouse
   - name: ZMK
     url: https://github.com/zmkfirmware/zmk
     note: draft board in zmk-board/ builds on ZMK main; no PAW3370 driver yet, so no motion
@@ -145,8 +164,11 @@ related_firmware:
     note: ZMK for nRF52 mice (PAW3395 class); no Glorious target
 
 docs:
+  - README.md
   - hardware.md
+  - receiver.md
   - firmware-updater.md
   - flash-layout-and-swd.md
   - flashing-feasibility.md
   - zmk-board/README.md
+  - re-scripts/README.md
