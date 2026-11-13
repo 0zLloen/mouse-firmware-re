@@ -73,7 +73,7 @@ Disassembly of `0x0000BD80`–`0x0000BF30` (flash page erase/write wrapper) and 
 | :--- | :--- | :--- | :--- |
 | `0x00000000` – `0x00005FFF` | `24 KiB` | **Compx Resident USB HID Bootloader (`258a:2103`)** | App `.hex` starts at `0x00006000`; never programmed by the updater |
 | `0x00006000` – `0x0001CC8F` | `91.1 KiB` (`93,328 B`) | **Mouse Application Firmware (`CM2856_Mouse_USB`)** | Vector table at `0x00006000` (`Initial_SP = 0x2000AF50`) |
-| `0x0001CC90` – `0x0007DFFF` | `388.9 KiB` | Unused application flash, available for custom firmware growth | Not in the `.hex` (`0xFF` after `Erase`) |
+| `0x0001CC90` – `0x0007DFFF` | `388.9 KiB` | Unused application flash, available for custom firmware growth | Not in the `.hex`. `Erase` does **not** blank `0x6000`–`0x1DFFF` (Verified 2026-11-13): leftovers of an earlier image survive there |
 | `0x0007E000` – `0x0007FFFF` | `8 KiB` | Reserved for custom-firmware settings (not used by stock) | Repository convention |
 | `0x00080000` – `0x00087FFF` | `32 KiB` | Guard band, unused by stock as far as the disassembly shows | — |
 | `0x00088000` – `0x00088FFF` | `4 KB` | **System Config Page `0x88`** (`32` bytes + CRC-16 at `+0x1E`, factory/RF pairing data) | Read/written at `0x14700`–`0x14770` (`page 0x88`) |
@@ -115,7 +115,7 @@ Disassembly of the stock firmware's USB Feature report dispatcher (`0x0001451C`�
        0x14836: str r1, [r0, #0x0]   ; *(volatile uint32_t *)0x2003FFFC = 0xA55AA55A
        ```
      - After a short timer ticks (`100 ms`), calls `0x000071B8` (`NVIC_SystemReset()`, writing `0x05FA0004` to `SCB->AIRCR` at `0xE000ED0C`).
-   - Upon reset, the resident Compx Bootloader (`0x00000000`–`0x00005FFF`) inspects `*(uint32_t *)0x2003FFFC`. Seeing `0xA55AA55A`, it clears the magic word, initializes USB as **`258a:2103`** (`Compx USB HID Bootloader`), and waits for flashing commands!
+   - Upon reset, the resident Compx Bootloader (`0x00000000`–`0x00005FFF`) presumably checks `*(uint32_t *)0x2003FFFC` (Inferred: the bootloader has never been read; whether it clears the word is Unknown). Verified: the mouse then enumerates as **`258a:2103`** (iProduct `Glorious bootloader`) and accepts flashing commands.
 
 ### 4.2 Step 2 — Bootloader Command Packet Structure (`258a:2103` & `258a:2113`)
 
@@ -124,10 +124,10 @@ Once enumerated as `258a:2103` (Wired Mouse Bootloader) or `258a:2113` (Wireless
 | Command Name | `buf[3]` | `buf[4]` (Len) | `buf[5]` | `buf[6]` (Cmd) | `buf[7..11]` | `buf[12..64]` | Response / Behavior |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **`GetBLFW`** | `0x00` | `0x06` | `0xB0` | `0x80` | `0x00..` | `0x00..` | `GetFeature` returns `resp[1] == 0xA1` (OK) and 4-byte BL version at `resp[9..12]` (must contain `0xB0`). |
-| **`Erase`** | `0x00` | `0x08` | `0xB0` | `0x01` | `0x00..` | `0x00..` | Erases application flash starting at `0x00006000` (mouse) / `0x00007000` (receiver). The upper bound is **Unknown**: it may include `0x7E000` and the `0x88000`+ pairing/profile pages. |
+| **`Erase`** | `0x00` | `0x08` | `0xB0` | `0x01` | `0x00..` | `0x00..` | **Verified** on the mouse: clears `0x0001E000` up to at least `0x0004D7FF` but **keeps `0x00006000`–`0x0001DFFF`**, including the old vector table. Whether it reaches `0x7E000` or the `0x88000`+ pairing/profile pages is **Unknown**; the receiver was not tested. |
 | **`Program`** | `0x00` | `len + 5` | `0xB0` | `0x02` | `buf[7] = len` (`<= 32`)<br>`buf[8..11] = addr` (Big-Endian `uint32`) | Up to 32 bytes of `data ^ 0x55` (`buf[12 .. 12+len-1]`) | Bootloader XORs each byte with `0x55` and writes to `addr`. Host sleeps `10 ms` every `4096` (`0x1000`) bytes. |
 | **`VerifyByAddress`** | `0x00` | `0x20` | `0xB0` | `0x83` | `buf[7] = len` (`<= 32`)<br>`buf[8..11] = addr` (Big-Endian `uint32`) | `0x00..` | `GetFeature` returns `resp[1] == 0xA1` and `len` bytes at `resp[12 .. 12+len-1]` (XORed with `0x55`). |
-| **`Exit`** | `0x00` | `0x01` | `0xB0` | `0x04` | `buf[7] = mode` (`0x01` = boot app) | `0x00..` | Marks application valid and resets into application (`0x00006000`). |
+| **`Exit`** | `0x00` | `0x01` | `0xB0` | `0x04` | `buf[7] = mode` (`0x01` = boot app) | `0x00..` | Resets into the application at `0x00006000` (Verified; the SET fails with `ETIMEDOUT` as the device resets). Any validation it performs is **Unknown**. |
 
 - **Status Codes in `resp[1]` (`CPMXHIDDevice::SetFeature` / `GetFeature`)**:
   - `0xA1` or `0x02`: Command Succeeded (`Result_Succeed`)
@@ -149,13 +149,13 @@ Decompilation of `Form1::InitDevice()` and `Form1::StartUpdateThread()` shows:
 
 ## 5. Conclusion: Can the Official Updater Safely Install Custom Firmware?
 
-**Probably (Inferred; not yet tried on hardware), provided three rules are followed:**
+**Yes over USB, with care.** A patched image was flashed through the bootloader and booted on a retail unit (2026-11-13, `compx_usb_flasher.py`, not the official updater). The rules below still apply:
 
 1. **No Cryptographic Lockout**: Neither `FirmwareUpdate.exe` nor the protocol shows any signature check; the payload is only XORed with `0x55` on the USB wire. A valid ARM Cortex-M4F image linked at **`0x00006000`** and packaged as a plain Intel HEX file (like `CM2856_Mouse_USB_v1.00.00_20220810.hex`) should be accepted, programmed, verified and booted by the stock bootloader.
 2. **Resident Bootloader Preservation**: `Program` (`0x02`) writes start at the application base (`>= 0x00006000`), so the 24 KB bootloader at `0x00000000`–`0x00005FFF` is not written. The `Erase` (`0x01`) upper bound is Unknown, so settings and pairing pages may not survive.
 3. **Mandatory Bootloader Re-Entry Mechanism in Custom Firmware**:
    - Because the bootloader normally jumps straight to `0x00006000` when a valid application header/vector table is present unless `*(volatile uint32_t *)0x2003FFFC == 0xA55AA55A`, **any custom firmware flashed via USB MUST include**:
      1. **Boot-Chord Hardware Fallback**: On startup (inside `SYS_INIT(PRE_KERNEL_1)` before initializing USB or sensors), sample the physical Left + Right + DPI buttons (`P1.15`, `P1.13`, `P1.00`). If held low at power-on/reset, immediately write `0xA55AA55A` to `*(volatile uint32_t *)0x2003FFFC` and call `NVIC_SystemReset()`.
-     2. **Runtime re-entry**: a button combo or a USB command that writes `0xA55AA55A` to `0x2003FFFC` and resets. The ZMK board uses a Left+Right+DPI combo (`&compx_bl`); a USB Feature-report command would need the (still Unknown) stock entry packet and a vendor HID interface.
+     2. **Runtime re-entry**: a button combo or a USB command that writes `0xA55AA55A` to `0x2003FFFC` and resets. The ZMK board uses a Left+Right+DPI combo (`&compx_bl`); a USB Feature-report command would need a vendor HID interface on interface 2 that answers the stock entry packet (`body[3] = 0x01, body[6] = 0xB0`, section 4.1).
    - The boot chord is sampled only when the MCU comes out of reset. Plugging in USB does **not** reset a running, battery-powered mouse (VBUS only wakes it from System OFF). To use it: disconnect the battery (or let the mouse fully power down), hold Left+Right+DPI, then connect USB.
    - Once the mouse enumerates as `258a:2103`, restore stock firmware with `python3 platforms/compx-nrf52/tools/compx_usb_flasher.py flash --firmware-hex CM2856_Mouse_USB_v1.00.00_20220810.hex`.
