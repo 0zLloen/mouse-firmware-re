@@ -106,7 +106,7 @@ Addresses are in `CM2856_Mouse_USB_v1.00.00_20220810.hex` and **Inferred** from 
 
 ### 3.2 GPIO Pin Mapping (Inferred from Stock Firmware Disassembly)
 
-By disassembling the GPIO initialization routine (`0x0000C5B8`–`0x0000C648`), GPIO port table (`0x0001AC04`: `[0x50000000, 0x50000300]`), button/wheel scanner (`0x00016B30`–`0x00016CE0`, `0x00009614`–`0x00009690`), low-power wake config (`0x0000ABF8`–`0x0000AC58`), LED driver (`0x00018FA0`–`0x00018FF0`), battery monitor (`0x0000E1B0`–`0x0000E1F0`), and SPI2 sensor driver (`0x000184C8`–`0x0001855C`), the functional GPIO pins on the `CM2852-BAMF` PCB are mapped below. None has been probed on hardware:
+By disassembling the GPIO initialization routine (`0x0000C5B8`–`0x0000C648`), GPIO port table (`0x0001AC04`: `[0x50000000, 0x50000300]`), button/wheel scanner (`0x00016B30`–`0x00016CE0`, `0x00009614`–`0x00009690`), low-power wake config (`0x0000ABF8`–`0x0000AC58`), LED driver (`0x00018FA0`–`0x00018FF0`), battery monitor (`0x0000E1B0`–`0x0000E1F0`), and SPI2 sensor driver (`0x000184C8`–`0x0001855C`), the functional GPIO pins on the `CM2852-BAMF` PCB are mapped below. None has been probed on hardware. The three boot-chord pins (`P1.15`, `P1.13`, `P1.00`) are **Verified** to read low with Left + Right + DPI held: the open-directional-dpi patch enters the bootloader only when all three read low, and with the chord held at power-up it enumerated as `258a:2103` (build `21ea252`, 2026-11-13). The test does not tell the three apart, so which pin is which button is still from the disassembly:
 
 | Peripheral / Function | nRF52840 Pin | GPIO Number | Direction / Config | Firmware Disassembly Reference | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -115,12 +115,12 @@ By disassembling the GPIO initialization routine (`0x0000C5B8`–`0x0000C648`), 
 | **PAW3370 SPI2 MISO** | **`P0.11`** | `11` | Input, Pull-Up (`NRF_SPI2->PSEL.MISO = 11`) | `0x1850C` (`gpio_cfg`), `0x18530` (`str r0, [0x40023510]`) | **Inferred** |
 | **PAW3370 SPI2 MOSI** | **`P0.08`** | `8` | Output (`NRF_SPI2->PSEL.MOSI = 8`) | `0x1851C` (`gpio_cfg`), `0x18536` (`str r0, [0x4002350C]`) | **Inferred** |
 | **PAW3370 MOTION IRQ** | **`P0.06`** | `6` | Input, Active Low sense/wake | `0x0AC38` (`gpio_cfg_sense r0=6`) | **Inferred** |
-| **Button 0 (Left Click / LMB)** | **`P1.15`** | `47` (`0x2F`) | Input, Pull-Up, Active Low | `0x0C5BE`, `0x09618`, `0x16B3C`, `0x0ABFC` | **Inferred** |
-| **Button 1 (Right Click / RMB)** | **`P1.13`** | `45` (`0x2D`) | Input, Pull-Up, Active Low | `0x0C5C8`, `0x09620`, `0x16B44`, `0x0AC06` | **Inferred** |
+| **Button 0 (Left Click / LMB)** | **`P1.15`** | `47` (`0x2F`) | Input, Pull-Up, Active Low | `0x0C5BE`, `0x09618`, `0x16B3C`, `0x0ABFC` | **Verified** in the boot chord (2026-11-13); which button: **Inferred** |
+| **Button 1 (Right Click / RMB)** | **`P1.13`** | `45` (`0x2D`) | Input, Pull-Up, Active Low | `0x0C5C8`, `0x09620`, `0x16B44`, `0x0AC06` | **Verified** in the boot chord (2026-11-13); which button: **Inferred** |
 | **Button 2 (Middle Click / MMB)** | **`P1.10`** | `42` (`0x2A`) | Input, Pull-Up, Active Low | `0x0C5D2`, `0x0962A`, `0x16B4E`, `0x0AC10` | **Inferred** |
 | **Button 3 (Back / Side Btn 4)** | **`P0.09`** | `9` (`0x09`) | Input, Pull-Up, Active Low (NFC1 as GPIO) | `0x0C5DC`, `0x09634`, `0x16B58`, `0x0AC1A` | **Inferred** |
 | **Button 4 (Forward / Side Btn 5)** | **`P0.10`** | `10` (`0x0A`) | Input, Pull-Up, Active Low (NFC2 as GPIO) | `0x0C5E6`, `0x0963E`, `0x16B62`, `0x0AC24` | **Inferred** |
-| **Button 5 (DPI Cycle Button)** | **`P1.00`** | `32` (`0x20`) | Input, Pull-Up, Active Low | `0x0C5F0`, `0x09648`, `0x16B6C`, `0x0AC2E` | **Inferred** |
+| **Button 5 (DPI Cycle Button)** | **`P1.00`** | `32` (`0x20`) | Input, Pull-Up, Active Low | `0x0C5F0`, `0x09648`, `0x16B6C`, `0x0AC2E` | **Verified** in the boot chord (2026-11-13); which button: **Inferred** |
 | **Scroll Wheel Encoder A** | **`P0.29`** | `29` (`0x1D`) | Input, Pull-Up | `0x0C600`, `0x0AC54`, `0x16CB2` | **Inferred** |
 | **Scroll Wheel Encoder B** | **`P0.02`** | `2` (`0x02`) | Input, Pull-Up | `0x0C5F8`, `0x0AC3E`, `0x16CBA` | **Inferred** |
 | **Charger / Power Status 1** | **`P1.06`** | `38` (`0x26`) | Input, Pull-Up | `0x0C614`, `0x0E1C4` (`Source\battery.c`) | **Inferred** |
@@ -195,12 +195,14 @@ From two independent disassembly passes over `CM2856_Mouse_USB_v1.00.00_20220810
 - A held DPI-shift ("sniper") key programs the sensor without updating `0x20003068`.
 - The stage index is not a reliable stand-in for the DPI. The factory defaults boot at 1200 DPI with index 2, and the DPI-adjust wheel and the host "set DPI" command change the DPI without changing the index.
 
-### 4.2 Millisecond tick (Inferred from disassembly, 2026-11-13)
+### 4.2 Millisecond tick (Inferred from disassembly; rate on the cable Verified, 2026-11-13)
 
 - `0x0000E894` calls `0x00018B3C` with `1000`, which sets up `TIMER1` (`0x40009000`): 32-bit timer, `PRESCALER = 4` (1 MHz), `CC[0] = 1000`, `SHORTS` `COMPARE0_CLEAR`, interrupt on `COMPARE0`. So it fires every 1 ms.
 - The handler (`0x00006C3A` → `0x00018BA4`) increments several tick counters, among them `0x2000301A` (`0x00018BB6`).
 - The main loop at `0x00013270` tests `0x2000301A`, clears it and calls the sensor burst `0x0001708C` (`0x00013278`), moving or not. The second burst call (`0x000131D8`) runs only while the motion pin `P0.06` is low.
-- So the sensor is read about once per millisecond. Not measured on hardware.
+- So the sensor is read about once per millisecond.
+- **Verified on the cable (2026-11-13):** open-directional-dpi `21ea252` counts the sensor-burst calls and reports the count in `GET_CAPABILITIES` bytes `20..23`. Read once a second for 12 s with the mouse still, it rose 1000.0 per second. Its idle reset uses this count as its millisecond clock.
+- Over 2.4 GHz it was not measured: while the mouse sends no reports the receiver answers `0xA4`, so the count cannot be read with the mouse still. **Inferred** the same (same `TIMER1` tick).
 
 ## 5. Survey of Existing Open-Source Research (Phase A Questions 1–7)
 
@@ -212,4 +214,4 @@ From two independent disassembly passes over `CM2856_Mouse_USB_v1.00.00_20220810
 | **4. Published firmware dump, updater image, or bootloader analysis?** | No prior public bootloader analysis existed for Compx `258a:2103`/`258a:2113`. We decompiled `FirmwareUpdate.exe` and disassembled the ARM firmware to produce a complete specification (`firmware-updater.md`). | **Verified** | `FirmwareUpdate.exe` + `mouse_fw.bin` |
 | **5. Reverse-engineered firmware update protocol?** | **Yes, exercised on hardware (2026-11-13).** 65-byte Feature report protocol (`0xB0` bootloader commands, `0x55` wire XOR, `0x2003FFFC = 0xA55AA55A` bootloader entry magic). The app-to-bootloader packet was read from `FirmwareUpdate.exe` and tested; `GetBLFW`, `Erase`, `Program`, `VerifyByAddress` and `Exit` were all used to flash and boot a patched image on a retail unit. | **Verified** | See `firmware-updater.md` and `../../platforms/compx-nrf52/bootloader-protocol.md` |
 | **6. Compatible PAW3370/BAMF sensor driver?** | **No.** No driver for `pixart,paw3370` exists in Zephyr (3.5–4.5), ZMK (v0.3, main), QMK, or known community modules. One has to be written from the stock register/burst sequence at `0x1708C`–`0x18554`. This blocks a working ZMK port. | **Verified** (source search) | Stock FW `0x1708C`–`0x18554` |
-| **7. Documented recovery or unbricking procedure?** | **USB recovery tested.** Through the resident Compx bootloader (`258a:2103`) a patched image was flashed and booted, and the official image was restored the same way (2026-11-13). The boot chord and passive SWD inspection (`flash-layout-and-swd.md`, `flashing-feasibility.md`) are still untested. | **Verified** (USB) | See `flash-layout-and-swd.md` |
+| **7. Documented recovery or unbricking procedure?** | **USB recovery tested.** Through the resident Compx bootloader (`258a:2103`) a patched image was flashed and booted, and the official image was restored the same way (2026-11-13). With open-directional-dpi `21ea252` on the mouse, its boot chord (Left + Right + DPI held at power-up on the cable) and its `ENTER_BOOTLOADER` command (`0x0F`, argument `BLRS`) both entered the bootloader (`258a:2103`), and `compx_usb_flasher.py dump --out <new file> --end 0x6020` (32-byte read, then `Exit`) returned it to `258a:2018` without writing anything (2026-11-13). The ZMK board's boot chord and passive SWD inspection (`flash-layout-and-swd.md`, `flashing-feasibility.md`) are still untested. | **Verified** (USB, patch boot chord) | See `flash-layout-and-swd.md` |

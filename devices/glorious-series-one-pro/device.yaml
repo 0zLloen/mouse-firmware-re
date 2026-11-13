@@ -145,9 +145,12 @@ recovery:
   - method: re-flash the official .hex through the resident bootloader (official updater or compx_usb_flasher.py flash)
     evidence: verified
     source: compx_usb_flasher.py flash of the official CM2856_Mouse_USB_v1.00.00_20220810.hex on a retail unit, read back and booted (no DP01 stamp afterwards), 2026-11-13; a patched image was flashed the same way before
-  - method: boot chord of the open-directional-dpi patch and the zmk-board image (hold Left + Right + DPI while the MCU comes out of reset, with the battery disconnected or the mouse fully powered down, then connect USB; stock firmware has no chord)
+  - method: boot chord of the open-directional-dpi patch (hold Left + Right + DPI while the MCU comes out of reset, with the battery disconnected or the mouse fully powered down, then connect USB; stock firmware has no chord)
+    evidence: verified
+    source: open-directional-dpi 21ea252 (stock_ddpi_patch.c) on a retail unit, 2026-11-13; with the chord held while the mouse powered up on the cable it enumerated as 258a:2103 "Glorious bootloader", so P1.15, P1.13 and P1.00 read low with the three buttons held (which pin is which button stays inferred, hardware.md 3.2); compx_usb_flasher.py dump --out <new file> --end 0x6020 (32-byte read, then Exit) returned it to 258a:2018 without writing anything
+  - method: boot chord of the zmk-board image (same chord, separate code in bootloader_reentry.c)
     evidence: unknown
-    source: implemented (open-directional-dpi stock_ddpi_patch.c, zmk-board bootloader_reentry.c) but untested on hardware, and the three button pins are inferred (hardware.md 3.2); settled by holding the chord on a unit with the patch while it resets and checking that 258a:2103 enumerates
+    source: implemented (zmk-board bootloader_reentry.c) but untested on hardware, the ZMK board was never flashed; settled by flashing it, holding the chord while it resets and checking that 258a:2103 enumerates
   - method: SWD on unlabelled test pads near U1 (pad order and APPROTECT state not checked)
     evidence: unknown
     source: needs a passive continuity check and a read-only CTRL-AP APPROTECTSTATUS read (flash-layout-and-swd.md section 5)

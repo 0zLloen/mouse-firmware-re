@@ -35,6 +35,8 @@ All **Verified** on a retail receiver and mouse, 2026-11-13, unless marked:
 - While the reply is pending, GET_REPORT returns `body[0] = 0xA0`. A relayed version query answers in about 8 ms.
 - It copies back as many reply bytes as the **request** asked for (`body[3] + 6`), not as many as the mouse sent. The rest of the 64 bytes is stale. The stock version query (`body[3] = 0x06`) therefore returns 12 bytes; with `body[3] = 0x0A` it returns 16.
 - `0xA4` means the mouse cannot be reached. It can be transient: a `SAVE_FLASH` of the open-directional-dpi patch erases a flash page, which stalls the mouse's radio. The receiver then answers `0xA4` after about 270 ms, and the real reply still arrives after about 770 ms (`rf_save_probe.py`). Hosts poll to a deadline and treat only a final `0xA4` as an unreachable mouse.
+- While the mouse sends no reports (still, or only scrolling) the receiver answers `0xA4`, so requests do not reach it (2026-11-13, open-directional-dpi `21ea252`).
+- With build `21ea252` a `SAVE_FLASH` of a changed profile answered in 402 ms, and an identical second one in 24 ms with no page erase and no `0xA4`: the patch skips an unchanged save. A profile saved through the receiver survived switching the mouse off and on, and its curve applied over the radio (up/down count ratio 0.681 with up at 0.5x, against 0.938 flat in the earlier `wl_capture.py` test).
 - The mouse sends `reply[3] + 6` bytes back. An open-directional-dpi reply keeps its status (`0xA1`..`0xA4`) in byte 3, so the stock radio code would send more than 64 bytes for it; the patch caps the length at 64 (**Inferred**: emulation, `rfemu.py`).
 
 ## 4. Receiver-local commands

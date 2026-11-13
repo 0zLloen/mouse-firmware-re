@@ -28,8 +28,8 @@ Implements the C52840Dongle USB HID Feature-report ISP protocol from FirmwareUpd
 
 The app -> bootloader entry packet is the official updater's (see enter_bootloader_from_app) and
 was tested on a retail unit. If the mouse does not re-enumerate as 258a:2103, use the official
-updater or the patched firmware's boot chord (untested on hardware), then run this tool
-again (it uses an already-present 258a:2103 directly).
+updater or the open-directional-dpi patch's boot chord (verified 2026-11-13; the ZMK board's
+is untested), then run this tool again (it uses an already-present 258a:2103 directly).
 """
 
 import argparse
