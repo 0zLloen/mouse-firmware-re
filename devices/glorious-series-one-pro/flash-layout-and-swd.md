@@ -90,6 +90,15 @@ Inspection of the FCC internal photographs (`https://fccid.io/2AXP2SP22`) for th
 0x00100000 +-------------------------------------------------------+
 ```
 
+### 4.1a USB Read-Back of a Retail Unit (Verified, 2026-11-13)
+
+`compx_usb_flasher.py dump` on a retail mouse (firmware v1.0.0.0), entering the bootloader with the updater's own SetBLDeviceMode packet:
+
+- `VerifyByAddress` returns data for `0x00006000`–`0x0004D7FF` and status `0xA2` from `0x0004D800` up. **USB read-back cannot reach the `0x7E000` settings page or the `0x88000`+ pairing/profile pages**, so a USB-only backup does not protect them. Only SWD could read them.
+- `0x00006000`–`0x0001CC8F` is byte-identical to `CM2856_Mouse_USB_v1.00.00_20220810.hex`.
+- Non-blank data that the official image does not explain sits at `0x0001CD00`–`0x0001D68F` (about 2.4 KB, right after the stock image, where the open-directional-dpi patch links), `0x00036790`–`0x0003688F`, `0x00043790`–`0x00043A8F` and `0x00044790`–`0x00044D8F`. Their origin is **Unknown**: possibly an earlier flash of a patched image or factory data. It also suggests that the update path does not erase the whole application region, though the `Erase` extent itself remains **Unknown**.
+- The dump is not published (it is unit-specific); its SHA-256 for this unit is `a3b734ce3c5496fb3459a75791af55421facf20af5845313fd82f7ee100e72da`.
+
 ### 4.2 Why Preserving `0x00000000`–`0x00005FFF` and `0x00088000` is Essential
 
 1. **Bootloader (`0x00000000`–`0x00005FFF`)**:

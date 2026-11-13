@@ -127,7 +127,7 @@ class MockDevice:
 
     def on_set(self, f):
         if self.mode == "app":
-            if f[3] == 0x02 and f[6] == 0xB0 and self.honor_entry:
+            if f[3] == 0x01 and f[6] == 0xB0 and not any(f[4:6]) and self.honor_entry:
                 self.mode = "bl"
                 raise OSError(errno.EPIPE, "reset")
             if f[5] == 0x81:
@@ -217,6 +217,15 @@ def test_flasher(tmp: Path):
     m = MockDevice(mode="app", honor_entry=False).install()
     err = run(fl.cmd_flash, firmware_hex=str(good))
     assert isinstance(err, RuntimeError) and "official updater" in str(err)
+
+    m = MockDevice(mode="app", old=old).install()
+    m.flash[0x88000:0x88020] = bytes(range(32))  # pairing page must be captured
+    out = tmp / "backup.hex"
+    assert run(fl.cmd_dump, out=str(out), start=BASE, end=0x100000, stay_in_bl=False) == 0 and m.mode == "app"
+    data, lo, *_ = hx.parse_compx_hex(out)
+    assert lo == BASE and data == bytes(m.flash[BASE:0x100000]), "dump must equal flash"
+    assert isinstance(run(fl.cmd_dump, out=str(out), start=BASE, end=0x100000, stay_in_bl=False), ValueError)
+    assert not any(m.programs), "dump must never program"
 
 
 def test_interface_selection(tmp: Path):
