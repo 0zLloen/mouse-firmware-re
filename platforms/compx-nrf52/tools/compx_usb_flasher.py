@@ -213,7 +213,7 @@ def bl_read_32(bl: CompxHidDevice, address: int, length: int = BLOCK) -> bytes:
 def bl_erase_app(bl: CompxHidDevice) -> None:
     """
     C52840Dongle::Erase (cmd 0x01), sent once, exactly as the updater does. On a retail Series One Pro
-    (2026-11-13) it cleared 0x1E000..0x4D7FF (the readable top) but left 0x6000..0x1DFFF, the old
+    (2026-11-13) it cleared 0x1E000..0x4D7FF (the readable top), not 0x7E000, and left 0x6000..0x1DFFF, the old
     image, in place: it does not blank the vector table, see invalidate_vector_table().
     """
     sent_error = None

@@ -55,7 +55,7 @@ Reverse-engineered a mouse, or want to? [`CONTRIBUTING.md`](CONTRIBUTING.md) wal
      - **Unknown**: not established yet; say what would settle it.
 3. **Bootloader & Calibration Preservation**:
    - Tools in this repository never execute mass-erase (`APPROTECT` recovery / `ERASEALL`). `Program` writes are limited to the application partition (`0x00006000`–`0x0007DFFF` on the mouse), so they never touch the resident 24 KB USB HID bootloader (`0x00000000`–`0x00005FFF`) or the factory 2.4 GHz pairing page (`0x00088000`).
-   - The flasher has to send the bootloader's parameterless `Erase`, whose extent is defined by the bootloader and is **Unknown**. It may also clear the `0x7E000` settings page and the `0x88000`+ pairing/profile pages; measure that before relying on them surviving a reflash.
+   - The flasher has to send the bootloader's parameterless `Erase`. On the Series One Pro it clears `0x1E000` up to at least `0x4D7FF` and does **not** clear the `0x7E000` settings page (both verified); whether it reaches the `0x88000`+ pairing/profile pages is **Unknown**.
 
 ---
 
