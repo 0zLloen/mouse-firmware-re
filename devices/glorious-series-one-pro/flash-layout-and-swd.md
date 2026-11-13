@@ -64,7 +64,7 @@ Inspection of the FCC internal photographs (`https://fccid.io/2AXP2SP22`) for th
 0x00000000 +-------------------------------------------------------+
            | Compx Resident USB HID Bootloader (24 KB)             |
            | USB VID:PID = 258a:2103                               |
-           | Checks *(uint32_t *)0x2003FFFC == 0xA55AA55A at boot  |
+           | Presumably checks *(u32 *)0x2003FFFC == 0xA55AA55A    |
 0x00006000 +-------------------------------------------------------+
            | Application Firmware Region (480 KiB, ..0x0007DFFF)   |
            | Stock CM2856_Mouse_USB occupies 0x00006000..0x0001CC8F|

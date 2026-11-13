@@ -14,8 +14,10 @@ Implements the C52840Dongle USB HID Feature-report ISP protocol from FirmwareUpd
                3. program and verify everything except the first 32-byte block
                4. program and verify the vector-table block at 0x6000 last
                5. Exit
-             An interruption before step 4 leaves 0x6000 erased, so the bootloader stays
-             resident. flash does not compare against a reference image before erasing.
+             An interruption before step 4 leaves 0xFF at 0x6000 instead of a half-written
+             vector table (whether the bootloader then stays resident by itself is unknown:
+             its code has never been read). flash does not compare against a reference
+             image before erasing.
   dump       read-only backup: enter the bootloader and save flash from 0x6000 up to where
              VerifyByAddress is refused (0x4D800 on a retail Series One Pro, so the pairing and
              calibration pages at 0x88000+ are NOT covered) to an Intel HEX file; run it first.
