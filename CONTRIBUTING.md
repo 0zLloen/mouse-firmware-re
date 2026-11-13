@@ -182,6 +182,18 @@ python3 platforms/compx-nrf52/tools/compx_usb_flasher.py dump --out <backup.hex>
 
 From application mode it first sends the updater's own "set device mode" packet (read from `FirmwareUpdate.exe` and tested on a retail unit), then reads upward from `0x6000` through the bootloader's `VerifyByAddress` command until the bootloader refuses (at `0x4D800` on this mouse), and never overwrites an existing file. So it cannot reach the bootloader below `0x6000` or the pairing and calibration pages at `0x88000`+: on this mouse only SWD could back those up, which matters before any write that might erase them.
 
+**Windows and macOS.** `compx_usb_flasher.py` runs there through the PyPI package `hidapi`. This is **untested** on both: only Linux hidraw was used on hardware (2026-11-13). The commands, the checks and the order of writes are the same as on Linux.
+
+**Run only `probe` there until the bootloader's report descriptor is recorded.** `dump`, `verify-bl` and `flash` switch the mouse into its bootloader (`258a:2103`) first. With hidapi the tool finds it only by the collection with Usage Page `0xFFFF`, Usage `0x00`, and that pair is verified for the application's interface 2 only. If the bootloader uses another usage, the mouse stays in the bootloader and this tool cannot reach it there: it reports the usages it saw and writes nothing. The way back is then `compx_usb_flasher.py dump --out exit.hex --end 0x6020` on Linux with the default hidraw backend (reads 32 bytes, then sends `Exit`). To record the descriptor, enter the bootloader on Linux (`dump --out x.hex --end 0x6020 --stay-in-bl`), save `/sys/class/hidraw/hidrawN/device/report_descriptor` of the `258a:2103` node, and leave the bootloader as above.
+
+1. Install Python 3.10 or newer (python.org, or Homebrew on macOS).
+2. `pip install hidapi` (Windows: `py -m pip install hidapi`).
+3. Run the same commands, e.g. `py platforms\compx-nrf52\tools\compx_usb_flasher.py probe` on Windows, `python3 platforms/compx-nrf52/tools/compx_usb_flasher.py probe` on macOS.
+
+- Windows needs no driver: the mouse uses the built-in HID driver, as with the official updater. Do not install WinUSB or libusb drivers for it (Zadig): they would hide it from HID.
+- macOS may ask to allow Input Monitoring for your terminal. If it does, allow it in System Settings → Privacy & Security → Input Monitoring, restart the terminal and run the command again.
+- On Linux, `--backend hidapi` (before the command: `compx_usb_flasher.py --backend hidapi probe`) uses hidapi's hidraw module, never its libusb one, with the same udev rule. The default there stays the standard-library hidraw path.
+
 - If a tool for your device does not exist yet, write it the same way: only commands seen in the vendor software, read-only, a mocked offline test.
 - Read twice and compare: `sha256sum backup-1.hex backup-2.hex`. Keep the backups somewhere safe outside the repository.
 - Compare the application region against the official image. A match is a Verified statement worth recording ("the application region of a unit on v1.0.0.0 matches the official `.hex`").

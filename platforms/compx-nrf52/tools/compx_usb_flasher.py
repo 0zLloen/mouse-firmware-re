@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
 USB HID bootloader prober, verifier and programmer for Compx / Nordic nRF52840 mice
-(Glorious Series One Pro: app 258a:2018, resident bootloader 258a:2103). Linux hidraw only.
+(Glorious Series One Pro: app 258a:2018, resident bootloader 258a:2103). Linux: hidraw, standard
+library only. Windows and macOS: the PyPI package hidapi (pip install hidapi; untested there). On Linux
+--backend hidapi uses hidapi's hidraw module, never its libusb one.
 
 Implements the C52840Dongle USB HID Feature-report ISP protocol from FirmwareUpdate.exe:
   probe      read-only: report which mode the mouse is in and its version.
@@ -34,7 +36,6 @@ is untested), then run this tool again (it uses an already-present 258a:2103 dir
 
 import argparse
 import errno
-import fcntl
 import glob
 import hashlib
 import os
@@ -42,6 +43,11 @@ import struct
 import sys
 import time
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # Windows: hidapi backend only
+    fcntl = None
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import compx_hex_tool  # noqa: E402
@@ -103,15 +109,112 @@ def find_hidraw_feature_node(target_vid: int, target_pid: int, sysfs: str = "/sy
     return matches[0] if matches else None
 
 
+class HidrawTransport:
+    """Linux /dev/hidrawN through HIDIOC[SG]FEATURE, standard library only. The default on Linux."""
+
+    def find(self, vid: int, pid: int) -> Path | None:
+        return find_hidraw_feature_node(vid, pid)
+
+    def ready(self, node: Path) -> bool:
+        return os.access(str(node), os.R_OK | os.W_OK)
+
+    def open(self, node: Path):
+        return os.open(str(node), os.O_RDWR)
+
+    def close(self, fd) -> None:
+        os.close(fd)
+
+    def set_feature(self, fd, payload64: bytes) -> None:
+        fcntl.ioctl(fd, HIDIOCSFEATURE(65), bytearray(b"\x00" + payload64))
+
+    def get_feature(self, fd) -> bytes:
+        buf = bytearray(65)
+        fcntl.ioctl(fd, HIDIOCGFEATURE(65), buf)
+        return bytes(buf[1:65])
+
+
+class HidapiTransport:
+    """
+    cython-hidapi (PyPI hidapi): `hid` on Windows and macOS, `hidraw` on Linux. Its errors carry no errno,
+    so they are raised as EIO, one of RESET_ERRNOS: after SetBLDeviceMode and Exit, as with hidraw's EPROTO
+    and ETIMEDOUT, waiting for the new PID decides whether the reset happened.
+    """
+
+    def __init__(self, hid):
+        self.hid = hid
+
+    def find(self, vid: int, pid: int) -> str | None:
+        """
+        The collection with Usage Page 0xFFFF, Usage 0x00: the app's Feature interface 2 (hardware.md 2.2).
+        Interface 1 also has a 0xFFFF collection, with Usage 0x01 and input reports only. hidapi lists every
+        top-level collection; on Windows each has its own path. Raises if more than one device matches.
+        The bootloader (258a:2103) is assumed to use the same pair: its report descriptor is not recorded yet.
+        """
+        found = self.hid.enumerate(vid, pid)
+        paths = sorted({d["path"] for d in found if (d["usage_page"], d["usage"]) == (0xFFFF, 0x00)})
+        if len(paths) > 1:
+            raise RuntimeError(f"{len(paths)} devices {vid:04x}:{pid:04x} with a vendor Feature interface: "
+                               "connect only one")
+        return paths[0].decode() if paths else None
+
+    def ready(self, node: str) -> bool:
+        try:
+            self.close(self.open(node))
+            return True
+        except OSError:
+            return False
+
+    def open(self, node: str):
+        dev = self.hid.device()
+        try:
+            dev.open_path(node.encode())
+        except OSError:
+            raise OSError(errno.EIO, f"cannot open {node}: {dev.error()}") from None
+        return dev
+
+    def close(self, dev) -> None:
+        dev.close()
+
+    def set_feature(self, dev, payload64: bytes) -> None:
+        if dev.send_feature_report(bytes([0]) + payload64) < 0:  # returns -1, does not raise
+            raise OSError(errno.EIO, f"send_feature_report: {dev.error()}")
+
+    def get_feature(self, dev) -> bytes:
+        try:
+            report = bytes(dev.get_feature_report(0, 65))  # report ID 0 first, then the 64 bytes
+        except OSError:
+            report = b""
+        if len(report) < 65:
+            raise OSError(errno.EIO, f"get_feature_report returned {len(report)} bytes: {dev.error()}")
+        return report[1:65]
+
+
+def hidapi_module():
+    """cython-hidapi's hidraw backend on Linux (its `hid` module there is libusb), else its `hid` module."""
+    try:
+        if sys.platform.startswith("linux"):
+            import hidraw as hid
+        else:
+            import hid
+    except ImportError:
+        raise SystemExit("the hidapi backend needs the PyPI package hidapi: pip install hidapi") from None
+    if not hasattr(hid, "device"):
+        raise SystemExit(f"{hid.__name__} is not the PyPI package hidapi (pip uninstall hid; pip install hidapi)")
+    return hid
+
+
+transport = HidrawTransport()  # main() sets the --backend one
+
+
 class CompxHidDevice:
-    def __init__(self, dev_path: Path):
-        self.dev_path = dev_path
-        self.fd = os.open(str(dev_path), os.O_RDWR)
+    def __init__(self, node):
+        self.node = node
+        self.handle = transport.open(node)
 
     def close(self):
-        if self.fd is not None:
-            os.close(self.fd)
-            self.fd = None
+        if self.handle is not None:
+            transport.close(self.handle)
+            self.handle = None
 
     def __enter__(self):
         return self
@@ -124,7 +227,7 @@ class CompxHidDevice:
         assert len(payload64) == 64
         for attempt in range(retries):
             try:
-                fcntl.ioctl(self.fd, HIDIOCSFEATURE(65), bytearray(b"\x00" + payload64))
+                transport.set_feature(self.handle, payload64)
                 return
             except OSError:
                 if attempt == retries - 1:
@@ -133,10 +236,8 @@ class CompxHidDevice:
 
     def get_feature(self) -> bytes:
         for attempt in range(5):
-            buf = bytearray(65)
             try:
-                fcntl.ioctl(self.fd, HIDIOCGFEATURE(65), buf)
-                return bytes(buf[1:65])
+                return transport.get_feature(self.handle)
             except OSError:
                 if attempt == 4:
                     raise
@@ -277,23 +378,23 @@ def bl_exit_to_app(bl: CompxHidDevice) -> None:
     _send_reset_command(bl, bytes(req), "Exit")
 
 
-def wait_for_device(vid: int, pid: int, timeout_s: float = 10.0) -> Path:
+def wait_for_device(vid: int, pid: int, timeout_s: float = 10.0):
     deadline = time.time() + timeout_s
     while time.time() < deadline:
-        node = find_hidraw_feature_node(vid, pid)
-        if node is not None and os.access(str(node), os.R_OK | os.W_OK):
+        node = transport.find(vid, pid)
+        if node is not None and transport.ready(node):
             time.sleep(0.150)
             return node
         time.sleep(0.100)
     raise TimeoutError(f"Timed out waiting for USB HID device {vid:04x}:{pid:04x}")
 
 
-def enter_bootloader() -> Path:
+def enter_bootloader():
     """Return the bootloader node, switching an attached app-mode mouse into the bootloader."""
-    bl_node = find_hidraw_feature_node(VID_SINOWEALTH, PID_MOUSE_BL)
+    bl_node = transport.find(VID_SINOWEALTH, PID_MOUSE_BL)
     if bl_node:
         return bl_node
-    app_node = find_hidraw_feature_node(VID_SINOWEALTH, PID_MOUSE_APP)
+    app_node = transport.find(VID_SINOWEALTH, PID_MOUSE_APP)
     if not app_node:
         raise RuntimeError("Neither 258a:2018 (app) nor 258a:2103 (bootloader) found")
     with CompxHidDevice(app_node) as dev:
@@ -303,6 +404,15 @@ def enter_bootloader() -> Path:
     try:
         return wait_for_device(VID_SINOWEALTH, PID_MOUSE_BL, timeout_s=10.0)
     except TimeoutError:
+        listed = transport.hid.enumerate(VID_SINOWEALTH, PID_MOUSE_BL) if isinstance(transport, HidapiTransport) else []
+        if listed:  # it did re-enumerate; find() wants the app's usage pair, not yet recorded for the bootloader
+            usages = ", ".join(sorted({f"0x{d['usage_page']:04X}/0x{d['usage']:02X}" for d in listed}))
+            raise RuntimeError(
+                "The mouse is in its bootloader (258a:2103), but hidapi lists no collection with Usage Page 0xFFFF, "
+                f"Usage 0x00 that opens (listed: {usages}). Nothing was written. To return to the application, run "
+                "`compx_usb_flasher.py dump --out exit.hex --end 0x6020` on Linux (default hidraw backend), and "
+                "report the usages above in an issue."
+            ) from None
         raise RuntimeError(
             "Mouse did not re-enumerate as 258a:2103. Enter the "
             "bootloader with the official updater, then run this command again."
@@ -327,8 +437,8 @@ def load_image(hex_path: str) -> bytes:
 
 
 def cmd_probe(_args) -> int:
-    app_node = find_hidraw_feature_node(VID_SINOWEALTH, PID_MOUSE_APP)
-    bl_node = find_hidraw_feature_node(VID_SINOWEALTH, PID_MOUSE_BL)
+    app_node = transport.find(VID_SINOWEALTH, PID_MOUSE_APP)
+    bl_node = transport.find(VID_SINOWEALTH, PID_MOUSE_BL)
     if app_node:
         print(f"[PROBE] Wired mouse application ({VID_SINOWEALTH:04x}:{PID_MOUSE_APP:04x}) at {app_node}")
         with CompxHidDevice(app_node) as dev:
@@ -454,7 +564,11 @@ def cmd_dump(args) -> int:
 
 
 def main() -> int:
+    global transport
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    linux = sys.platform.startswith("linux")
+    parser.add_argument("--backend", choices=("hidraw", "hidapi") if linux else ("hidapi",),
+                        default="hidraw" if linux else "hidapi", help="USB HID access (default: %(default)s)")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("probe", help="Read-only probe of the connected mouse")
     p = sub.add_parser("verify-bl", help="Enter bootloader, read back and compare the full reference image")
@@ -468,6 +582,8 @@ def main() -> int:
     p.add_argument("--end", type=lambda s: int(s, 0), default=FLASH_END, help="Exclusive end address")
     p.add_argument("--stay-in-bl", action="store_true", help="Do not send Exit afterwards")
     args = parser.parse_args()
+    if args.backend == "hidapi":
+        transport = HidapiTransport(hidapi_module())
     cmds = {"probe": cmd_probe, "verify-bl": cmd_verify_bl, "flash": cmd_flash, "dump": cmd_dump}
     return cmds[args.cmd](args)
 

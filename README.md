@@ -17,7 +17,8 @@ mouse-firmware-re/
 │       │                                  #   receiver 258a:2113: 28 KB, app at 0x7000)
 │       └── tools/
 │           ├── compx_hex_tool.py          # Plain Intel HEX decode/encode and offline safety audit
-│           ├── compx_usb_flasher.py       # Linux hidraw probe, full read-back verifier, and .hex programmer
+│           ├── compx_usb_flasher.py       # Probe, full read-back verifier, and .hex programmer (Linux hidraw;
+│           │                              #   Windows/macOS through the PyPI package hidapi, untested)
 │           └── test_tools.py              # Offline checks for both tools (mock bootloader, no hardware)
 └── devices/
     ├── _template/                         # Copy to devices/<vendor>-<model>/: README.md skeleton + device.yaml
@@ -80,6 +81,6 @@ python3 compx_usb_flasher.py flash --firmware-hex CM2856_Mouse_USB_v1.00.00_2022
 
 Run `dump` before any `flash`: the vendor package is no longer downloadable, so a firmware version you have not archived is lost once it is overwritten. The backup covers `0x6000`–`0x4D7FF` only; the settings, pairing and profile pages above it are not readable over USB.
 
-The vendor `.hex` files are plain Intel HEX; the `0x55` XOR exists only on the USB wire. `flash` refuses any `.hex` whose lowest address is not `0x6000` or that ends above `0x4D800`, and any bootloader whose `GetBLFW` is not `b0 01 00 00` (the only one tested), before it erases anything. It programs the vector-table block at `0x6000` last, and sends `Exit` only after every byte reads back correctly. Install `devices/glorious-series-one-pro/udev/70-glorious-series-one-pro.rules` for non-root hidraw access.
+The vendor `.hex` files are plain Intel HEX; the `0x55` XOR exists only on the USB wire. `flash` refuses any `.hex` whose lowest address is not `0x6000` or that ends above `0x4D800`, and any bootloader whose `GetBLFW` is not `b0 01 00 00` (the only one tested), before it erases anything. It programs the vector-table block at `0x6000` last, and sends `Exit` only after every byte reads back correctly. Install `devices/glorious-series-one-pro/udev/70-glorious-series-one-pro.rules` for non-root hidraw access. Windows and macOS (untested): `pip install hidapi`, then only `probe` until the bootloader's report descriptor is recorded; see [CONTRIBUTING.md](CONTRIBUTING.md#6-read-back-and-backup).
 
 Firmware for this mouse: [open-directional-dpi](https://github.com/0zLloen/open-directional-dpi) patches the stock image (per-direction sensitivity). It was flashed with `compx_usb_flasher.py` and verified on a retail unit, over the cable and through the 2.4 GHz receiver (2026-11-13). The draft ZMK board in `zmk-board/` builds but has no sensor driver yet.
