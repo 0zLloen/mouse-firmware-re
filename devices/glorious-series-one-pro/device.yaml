@@ -126,12 +126,12 @@ bootloader:
   protocol: Compx USB HID ISP, 64-byte Feature reports on interface 2 (usage page 0xFFFF), payload XOR 0x55 on the wire; see platforms/compx-nrf52/bootloader-protocol.md
   entry: Feature report feat[2]=0x00 (deviceID), feat[3]=0x01, feat[6]=0xB0, rest 0 ("set device mode" to 0xB0); the application then writes 0xA55AA55A to SRAM 0x2003FFFC and resets
   evidence: verified
-  source: packet read from FirmwareUpdate.exe 1.0.8229.18185 IL (C52840Dongle::SetBLDeviceMode) and tested on a retail mouse, 2026-11-13; the magic-word path is from CM2856_Mouse_USB_v1.00.00_20220810.hex @ 0x00014832 (disassembly, inferred); Erase clears 0x1E000 and up but keeps 0x6000-0x1DFFF, and Program is read-modify-write (both verified 2026-11-13); whether Erase reaches 0x7E000 or 0x88000+ is unknown
+  source: packet read from FirmwareUpdate.exe 1.0.8229.18185 IL (C52840Dongle::SetBLDeviceMode) and tested on a retail mouse, 2026-11-13; the magic-word path is from CM2856_Mouse_USB_v1.00.00_20220810.hex @ 0x00014832 (disassembly, inferred); Erase clears 0x1E000 and up but keeps 0x6000-0x1DFFF, and Program is read-modify-write (both verified 2026-11-13); Erase does not reach 0x7E000 (a profile saved there survived two full flashes, verified 2026-11-13); whether it reaches 0x88000+ is unknown
 
 recovery:
   - method: re-flash the official .hex through the resident bootloader (official updater or compx_usb_flasher.py flash)
-    evidence: inferred
-    source: the USB write path is verified (a patched image was flashed, read back and booted on a retail unit, 2026-11-13); restoring the stock .hex this way has not been done yet
+    evidence: verified
+    source: compx_usb_flasher.py flash of the official CM2856_Mouse_USB_v1.00.00_20220810.hex on a retail unit, read back and booted (no DP01 stamp afterwards), 2026-11-13; a patched image was flashed the same way before
   - method: SWD on unlabelled test pads near U1 (pad order and APPROTECT state not checked)
     evidence: unknown
     source: needs a passive continuity check and a read-only CTRL-AP APPROTECTSTATUS read (flash-layout-and-swd.md section 5)

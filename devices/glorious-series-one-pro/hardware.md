@@ -150,6 +150,24 @@ Disassembly of `0x0001708C`–`0x00018558` in `CM2856_Mouse_USB_v1.00.00_2022081
 
 ---
 
+### 4.1 DPI Stages and the Active DPI in RAM
+
+From two independent disassembly passes over `CM2856_Mouse_USB_v1.00.00_20220810.hex` (backward from the DPI register writer `0x17860`, forward from the DPI button and the host HID commands), both checked in Unicorn emulation (**Inferred**, except where marked):
+
+| Address | Width | Meaning |
+| :--- | :--- | :--- |
+| `0x200038C8` | `0x266` bytes | RAM copy of the active profile config page (flash `0x8B000`, or the factory defaults at `0x1A3B8` when its length or CRC check fails, `0xD4A0`) |
+| `0x200038CF` | `u8` | Active profile, 0-based (`0..2`); profile base `P = 0x200038C8 + 200 * profile` |
+| `P+0x2B` / `P+0x2D` | `u16` LE | Current DPI X / Y (persisted copy) |
+| `P+0x30` / `P+0x31` | `u8` | Stage count (max 6) / stage index (0-based) |
+| `P+0x32+4i` / `P+0x34+4i` | `u16` LE | Stage `i` X / Y DPI |
+| `0x20004CE4` | 27 bytes | RAM copy of `P+0x2F..`; the stage index is at `0x20004CE6` |
+| **`0x20003068`** / `0x2000306A` | `u16` | **Live DPI X / Y in DPI units.** Written by every DPI path (DPI button, host HID over USB and 2.4 GHz, boot, profile switch) before the sensor is programmed at `0x17860`, which uses X only (`0x4D`/`0x4E`: 50-DPI steps below 10,100 DPI, 100-DPI steps up to 19,000). |
+
+- **Verified on hardware (2026-11-13):** the open-directional-dpi patch reads `0x20003068` on every sensor burst. Cycling the DPI button on a retail mouse reported 400 → 800 → 1600 → 3200 (that unit's stages), three times in a row.
+- A held DPI-shift ("sniper") key programs the sensor without updating `0x20003068`.
+- The stage index is not a reliable stand-in for the DPI. The factory defaults boot at 1200 DPI with index 2, and the DPI-adjust wheel and the host "set DPI" command change the DPI without changing the index.
+
 ## 5. Survey of Existing Open-Source Research (Phase A Questions 1–7)
 
 | Question | Finding | Classification | Sources |
@@ -160,4 +178,4 @@ Disassembly of `0x0001708C`–`0x00018558` in `CM2856_Mouse_USB_v1.00.00_2022081
 | **4. Published firmware dump, updater image, or bootloader analysis?** | No prior public bootloader analysis existed for Compx `258a:2103`/`258a:2113`. We decompiled `FirmwareUpdate.exe` and disassembled the ARM firmware to produce a complete specification (`firmware-updater.md`). | **Verified** | `FirmwareUpdate.exe` + `mouse_fw.bin` |
 | **5. Reverse-engineered firmware update protocol?** | **Yes, exercised on hardware (2026-11-13).** 65-byte Feature report protocol (`0xB0` bootloader commands, `0x55` wire XOR, `0x2003FFFC = 0xA55AA55A` bootloader entry magic). The app-to-bootloader packet was read from `FirmwareUpdate.exe` and tested; `GetBLFW`, `Erase`, `Program`, `VerifyByAddress` and `Exit` were all used to flash and boot a patched image on a retail unit. | **Verified** | See `firmware-updater.md` and `../../platforms/compx-nrf52/bootloader-protocol.md` |
 | **6. Compatible PAW3370/BAMF sensor driver?** | **No.** No driver for `pixart,paw3370` exists in Zephyr (3.5–4.5), ZMK (v0.3, main), QMK, or known community modules. One has to be written from the stock register/burst sequence at `0x1708C`–`0x18554`. This blocks a working ZMK port. | **Verified** (source search) | Stock FW `0x1708C`–`0x18554` |
-| **7. Documented recovery or unbricking procedure?** | **Partly tested.** The USB path through the resident Compx bootloader (`258a:2103`) works: a patched image was flashed, read back and booted. Restoring the stock image that way, the boot chord, and passive SWD inspection (`flash-layout-and-swd.md`, `flashing-feasibility.md`) are still untested. | **Inferred** (stock restore) | See `flash-layout-and-swd.md` |
+| **7. Documented recovery or unbricking procedure?** | **USB recovery tested.** Through the resident Compx bootloader (`258a:2103`) a patched image was flashed and booted, and the official image was restored the same way (2026-11-13). The boot chord and passive SWD inspection (`flash-layout-and-swd.md`, `flashing-feasibility.md`) are still untested. | **Verified** (USB) | See `flash-layout-and-swd.md` |

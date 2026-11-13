@@ -46,7 +46,7 @@ What protects the mouse when flashing custom firmware over the Compx USB HID boo
 
 1. **Layer 1 — Image placement** (checked in a ZMK main / Zephyr 4.1 build):
    - The ZMK board uses `CONFIG_USE_DT_CODE_PARTITION=y` with `code_partition` at `0x00006000`, size `0x78000`, which yields `CONFIG_FLASH_LOAD_OFFSET=0x6000` and `CONFIG_FLASH_LOAD_SIZE=0x78000` (`480 KiB`, ending at `0x0007DFFF`).
-   - The image never covers `0x00000000`–`0x00005FFF` (bootloader) or `0x00088000`+ (pairing, calibration, stock profiles), so `Program` never writes them. The bootloader's `Erase` extent is Unknown and may still clear `0x7E000`+ pages.
+   - The image never covers `0x00000000`–`0x00005FFF` (bootloader) or `0x00088000`+ (pairing, calibration, stock profiles), so `Program` never writes them. The bootloader's `Erase` does not clear `0x7E000` (verified); whether it reaches `0x88000`+ is Unknown.
 2. **Layer 2 — Magic-word write** (checked in the build's disassembly):
    - `glorious_enter_compx_bootloader()` locks interrupts, stores `0xA55AA55A` at `0x2003FFFC` (emitted as base `0x2003F000` + offset `0xFFC`), and writes `SCB->AIRCR` with no stack use in between. No SRAM reservation is needed: the bootloader consumes the word before Zephyr runs.
 3. **Layer 3 — Boot chord at `PRE_KERNEL_1`** (implemented in `zmk-board/.../bootloader_reentry.c`, present in the linked image; untested on hardware):
