@@ -12,7 +12,8 @@
 `boards/glorious/glorious_series_one_pro/` is a HWMv2 board directory (use this folder as `BOARD_ROOT`):
 
 - `board.yml`, `Kconfig.glorious_series_one_pro`, `Kconfig.defconfig`, `glorious_series_one_pro_defconfig`
-- `glorious_series_one_pro.dts`: pins, SPI2, regulators (`CONFIG_REGULATOR`), EC11 wheel wired to `zmk,keymap-sensors`, `&uicr nfct-pins-as-gpios`, flash partitions (app at `0x6000`, settings at `0x7E000`)
+- `glorious_series_one_pro.dts`: pins, SPI2, regulators (`CONFIG_REGULATOR`), EC11 wheel wired to `zmk,keymap-sensors`, `&uicr nfct-pins-as-gpios`, flash partitions (app `0x6000`–`0x4D7FF`, the top the flasher can read back; settings at `0x7E000`)
+- USB identity `258a:2018`, product string `Series One PRO (ZMK)` (stock is `Series One PRO Wireless`), so hosts can tell it from stock firmware
 - `glorious_series_one_pro.keymap`: five mouse buttons, wheel scrolling, Left + Right + DPI combo → `&compx_bl`
 - `bootloader_reentry.c` (built by `CMakeLists.txt`): the `&compx_bl` behavior and the `PRE_KERNEL_1` boot chord, both writing `0xA55AA55A` to `0x2003FFFC` and resetting into the Compx bootloader (`258a:2103`). The boot chord only runs when the MCU comes out of reset; plugging in USB does not reset a running battery-powered mouse.
 

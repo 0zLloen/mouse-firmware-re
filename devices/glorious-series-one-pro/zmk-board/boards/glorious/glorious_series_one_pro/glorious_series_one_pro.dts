@@ -160,7 +160,10 @@
 /*
  * Flash Partition Layout (Preserves Compx Bootloader AND Stock Calibration/Pairing!)
  *   0x00000000..0x00005FFF (24 KB):  Compx Resident USB HID Bootloader (258a:2103)
- *   0x00006000..0x0007DFFF (480 KB): Custom Application Firmware Partition
+ *   0x00006000..0x0004D7FF (286 KB): Custom Application Firmware Partition. It ends where the
+ *                                    bootloader stops answering reads (0xA2 from 0x4D800, Verified
+ *                                    2026-11-13), so compx_usb_flasher.py can verify it by read-back.
+ *   0x0004D800..0x0007DFFF:          unused
  *   0x0007E000..0x0007FFFF (8 KB):   Dedicated ZMK NVS Settings Storage
  *   0x00088000..0x000DFFFF:          UNTOUCHED Stock RF Pairing & Profile Flash
  */
@@ -178,7 +181,7 @@
 
         code_partition: partition@6000 {
             label = "image-0";
-            reg = <0x00006000 0x00078000>;
+            reg = <0x00006000 0x00047800>;
         };
 
         storage_partition: partition@7e000 {

@@ -12,8 +12,11 @@ Subcommands:
   audit    <hex>            decode and run the safety checks
   selftest <hex>            audit + bit-exact encode/decode roundtrip
 
-Safety checks (audit_binary_safety):
-  1. Image starts exactly at the application base (0x6000 mouse, 0x7000 receiver),
+--target receiver works for decode and encode only: audit and selftest refuse it, because the
+receiver's limits are not known (no tool here flashes the receiver).
+
+Safety checks (audit_binary_safety, mouse images only):
+  1. Image starts exactly at the application base 0x6000,
      where the bootloader looks for the vector table.
   2. Image ends at or below 0x7E000 (bootloader at 0x0..base, stock pairing/profile pages
      at 0x88000+ stay untouched by Program; the Erase extent is defined by the bootloader).
@@ -140,7 +143,11 @@ def encode_compx_hex(bin_data: bytes, base_addr: int = MOUSE_APP_BASE, sla_entry
 
 
 def audit_binary_safety(bin_data: bytes, base_addr: int = MOUSE_APP_BASE, app_base: int = MOUSE_APP_BASE) -> dict:
-    """Check the safety invariants of an nRF52840 application image linked at base_addr."""
+    """Check the safety invariants of an nRF52840 mouse application image linked at base_addr."""
+    if app_base != MOUSE_APP_BASE:
+        # Inferred from the receiver disassembly, not checked here: its RF ID/config page is at 0x38000
+        # and its re-entry magic word at 0x20007FFC, so the mouse limits below do not apply.
+        raise ValueError("receiver limits unknown; decode/encode only")
     end_addr = base_addr + len(bin_data)
     sp_init, reset_handler = struct.unpack_from("<II", bin_data.ljust(8, b"\xFF"))
     reset_addr = reset_handler & ~1

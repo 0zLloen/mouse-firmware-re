@@ -20,7 +20,8 @@ CONFIG_ZMK_USB=y
 CONFIG_USB_DEVICE_VID=0x258A
 CONFIG_USB_DEVICE_PID=0x2018
 CONFIG_USB_DEVICE_MANUFACTURER="Glorious"
-CONFIG_USB_DEVICE_PRODUCT="Series One PRO Wireless"
+# Same VID:PID as stock, so give it its own product string: hosts must not take it for stock firmware.
+CONFIG_USB_DEVICE_PRODUCT="Series One PRO (ZMK)"
 CONFIG_USB_HID_POLL_INTERVAL_MS=1
 
 # Sensor (P0.26) and LED (P0.14) power enables are regulator-fixed nodes with regulator-boot-on
