@@ -61,7 +61,7 @@ The receiver (`258a:2031`) enumerates with byte-identical report descriptors on 
 
 ### 2.3 Application-mode Feature reports and the 2.4 GHz link (mouse side)
 
-Addresses are in `CM2856_Mouse_USB_v1.00.00_20220810.hex` and **Inferred** from disassembly, most of them also run in Unicorn emulation ([`re-scripts/rfemu.py`](re-scripts/README.md), and open-directional-dpi's `build_and_verify_patch.py`), 2026-11-13. The receiver side is in [`receiver.md`](receiver.md).
+Addresses are in `CM2856_Mouse_USB_v1.00.00_20220810.hex` and **Inferred** from disassembly, most of them also run in Unicorn emulation ([`re-scripts/rfemu.py`](re-scripts/README.md), and open-directional-dpi's `build_and_verify_patch.py`), 2026-11-13. The receiver side is in [`receiver.md`](receiver.md). The radio itself (PHY, packets, link layer) is in [`radio-protocol.md`](../../platforms/compx-nrf52/radio-protocol.md).
 
 **Dispatcher.** USB and radio requests land in the same 64-byte buffer `0x20004F28` with a pending flag at `0x200032D4`. `0x000151AC` (called from `0x0000E8CE`) sets `body[0] = 0xA0` and switches on the command group `body[4]`:
 
@@ -80,7 +80,7 @@ Addresses are in `CM2856_Mouse_USB_v1.00.00_20220810.hex` and **Inferred** from 
 | TX aggregate (one radio packet) | `0x20007744` |
 | RX parser, reply completion, TX, flush | `0x00013334`, `0x000151F8`, `0x00015D74`, `0x0001513A` |
 
-- Data travels in type-7 records: header `more << 7 | len << 3 | 7`, where `len` counts one offset byte plus up to 14 data bytes and `more = 0` marks the last record.
+- Data travels in type-7 records: header `more << 7 | len << 3 | 7`, where `len` counts one offset byte plus up to 14 data bytes on the downlink (uplink reply chunks are 8 data bytes with no offset byte, [`radio-protocol.md`](../../platforms/compx-nrf52/radio-protocol.md#52-uplink-records-mouse--receiver) 5.2) and `more = 0` marks the last record.
 - RX: a request that arrives while the pending flag is set is dropped. Bytes a request does not carry are zero. A 1-byte record with a value from `0x39` to `0xFF` cancels a pending reply and resets the downlink sequence.
 - TX: `0x00015D74` sends the reply in 8-byte chunks and re-reads its length, `body[3] + 6`, for every chunk (`0x00015D8C`, `0x00015DB4`). With `body[3] > 0x3A` stock sends more than 64 bytes, and the extra bytes come from the staging area at `0x20004F68`. An open-directional-dpi reply keeps its status (`0xA1`..`0xA4`) in `body[3]`, so it would always overrun. The open-directional-dpi patch replaces both length reads with a 64-byte cap.
 - **Verified** round trips through the receiver (2026-11-13): stock version query, and the open-directional-dpi requests and replies with the patch flashed ([`receiver.md`](receiver.md) section 3).

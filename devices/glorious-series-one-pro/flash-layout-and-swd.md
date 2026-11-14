@@ -110,6 +110,12 @@ Inspection of the FCC internal photographs (`https://fccid.io/2AXP2SP22`) for th
 2. **Radio Pairing Info (`0x00088000`)**:
    - Disassembly of `0x00014700`–`0x00014770` shows that page `0x88` (`0x00088000`) holds the 32-byte system configuration block protected by CRC-16 at offset `+0x1E`, used by the proprietary 2.4 GHz radio stack (`NRF_RADIO` ISR at `0x00006711`) to authenticate with the `258a:2031` wireless receiver.
    - `Program` never writes it while custom firmware stays within `0x00006000`–`0x0007FFFF`. Whether `Erase` reaches it is **Unknown**; **Inferred** not: the mouse still linked to its receiver after at least five `Erase` runs on 2026-11-13.
+   - **Disputed** by the radio analysis ([`radio-protocol.md`](../../platforms/compx-nrf52/radio-protocol.md#31-address-and-pairing) 3.1):
+     - the v1.00.00 application never references `0x88000`;
+     - the 32-byte CRC block is the config struct on page `0x8A000`;
+     - the link identity is the chip's `FICR DEVICEID[0]`, not flash.
+
+     So the link surviving `Erase` says nothing about this page, and what it holds is **Unknown** until it is read.
 
 ### 4.3 What Still Needs SWD
 
