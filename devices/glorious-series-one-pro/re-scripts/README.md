@@ -21,6 +21,8 @@ python3 -m venv ~/re-venv && ~/re-venv/bin/pip install capstone==5.0.7 unicorn==
 | `rx_stamp.py` | Read-only | The relayed version query with `body[3]` = `0x06`, `0x0A`, `0x0E`, to see how many reply bytes come back and where the `DP01` stamp lands. |
 | `rf_save_probe.py <open-directional-dpi checkout>` | **Writes** the mouse's `0x7E000` profile page | One `SAVE_FLASH` through the receiver (as `odd_profile.py save`), printing each change of the receiver's answer for 1.5 s. |
 | `wl_capture.py <seconds>` | Read-only | Motion reports on interface 0 of the receiver and of the wired mouse: report rate while moving, and summed up, down and sideways counts. |
+| `compx_radio.py` | No | Standard library only. Encoder/decoder for the 2.4 GHz link ([`radio-protocol.md`](../../../platforms/compx-nrf52/radio-protocol.md)): nRF52 air framing from register values (address, CRC, whitening), packet header, records, connect and relay helpers. Run it for its self-check, which re-encodes frames from `compx_coemu.py` and compares stored bits (a regression check of the encoder, not a capture). |
+| `compx_coemu.py <mouse .hex> <receiver .hex>` | No | Boots both official images in Unicorn and bridges their radios through `compx_radio.py`. Asserts: connect, keep-alive, a cursor move, a left click and a relayed version query, end to end. Options for the downlink sequence wrap (`--queries`), SOF phase, lost connect answers, clock drift, outages and motion (`--move`), and `--ms` runs that print the link episodes. Refuses other images. |
 
 The hardware scripts use Linux hidraw and need write access to the device nodes (`../udev/`). Run them with only one Glorious mouse and receiver attached.
 
@@ -36,6 +38,8 @@ Never send the receiver its own commands `0x00` (mode; `0xB0` enters the receive
 | The stock mouse sends `body[3] + 6` reply bytes over the radio, re-read for every chunk at `0x15D74`; a 64-byte cap ends every reply after at most 8 chunks. | `rfemu.py` | **Inferred** (emulation of the stock image) |
 | Polling: 1,000 Hz on the cable, about 963 Hz through the receiver while moving. | `wl_capture.py` | **Verified**, 2026-11-13 |
 | Wireless direction gain: up/down count ratio 0.938 with a flat profile, 0.570 with the up direction (`N_270`) at 0.5x, loaded with `odd_profile.py load`. | `wl_capture.py` | **Verified**, 2026-11-13 |
+| Both images interoperate in co-emulation from the paired state: connect request `05 20` + `DEVICEID[0]`, answer `03 row e8 03`, 1 ms keep-alive, type-1 motion and click records to USB interface 0, relayed version query answered in 5.4 ms. This holds only when the first connect answer is lost on air (the default); otherwise the emulated pair never links ([`radio-protocol.md`](../../../platforms/compx-nrf52/radio-protocol.md) 3.3). | `compx_coemu.py` | **Verified (emulation)** ([`radio-protocol.md`](../../../platforms/compx-nrf52/radio-protocol.md) 6) |
+| A still mouse whose clock runs fast against the host's USB SOF loses the link (its keep-alive drifts into the start of the receiver's frame, and the timing bits only move it earlier); a moving mouse keeps it. | `compx_coemu.py --ms T --drift-ppm P [--move 1000]` | **Verified (emulation)**; on hardware **Unknown** |
 
 ## Regenerating the disassembly
 
