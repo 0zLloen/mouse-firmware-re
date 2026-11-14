@@ -29,6 +29,8 @@ The host writes a 64-byte Feature report (report ID `0`) and polls it back with 
 
 ## 3. Relay to the mouse
 
+How the request and reply travel over the radio, byte by byte: [`radio-protocol.md`](../../platforms/compx-nrf52/radio-protocol.md#54-a-relayed-feature-request-end-to-end) 5.4.
+
 All **Verified** on a retail receiver and mouse, 2026-11-13, unless marked:
 
 - The receiver sends `body[3] + 6` bytes of the request over the radio in 8-byte chunks (**Inferred** for the chunking: receiver and mouse disassembly, and `rfemu.py` on the mouse image).
