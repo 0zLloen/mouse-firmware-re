@@ -41,9 +41,9 @@ mcu:
     evidence: verified
     source: U1 marking in FCC internal photos (https://fccid.io/2AXP2SP22)
   - component: receiver
-    part: Nordic nRF52 series with USB (nRF52840 per the updater; its 32 KB RAM use also fits an nRF52820)
+    part: Nordic nRF52 series with USB, probably nRF52820 (the updater calls it an nRF52840)
     evidence: inferred
-    source: updater class C52840Dongle and ChipName 00052840 in the wireless Config.ini; the receiver .hex has initial SP 0x200026E0 and its bootloader magic at 0x20007FFC (top of 32 KB) and uses no flash above 0x38FFF; no receiver photo checked
+    source: the receiver .hex has initial SP 0x200026E0 and its bootloader magic at 0x20007FFC (top of 32 KB), uses no flash above 0x38FFF, names no peripheral the nRF52820 lacks and has no nRF52840 SystemInit errata literals (re-scripts/periph_scan.py, 2026-11-18); updater class C52840Dongle and ChipName 00052840 in the wireless Config.ini; no photo of the receiver board is public (receiver.md 1.1)
 
 sensor:
   part: PixArt PAW3370 derivative (Glorious BAMF)

@@ -327,9 +327,9 @@ The rows are walked in order, wrapping, so after a loss each side keeps cycling 
   1. A fast mouse drifts earlier relative to SOF. After the bits have pulled it below 150 µs, they say nothing more, and it drifts into the 0–70 µs window where the receiver is not yet listening.
   2. Keep-alives use only one slot parity, so it then misses every ACK, hops, and loses the link 256 ms later.
   3. While moving, the other slot (500 µs later) still gets through and resets the miss counters.
-- **Relation to the open question** in [`README.md`](../../devices/glorious-series-one-pro/README.md#open-questions): on hardware every relayed request failed "while the mouse was still or only scrolling" and went through while it moved. This mechanism is a candidate for part of that, and it predicts a dependence on the host (SOF accuracy) and the unit (crystal). It does not explain everything (**Inferred**):
-  - **Scrolling.** A wheel change queues a type-1 record, which is resent until it gets through in the working slot and then resets the miss counters (4.4). So by these rules regular scrolling should keep the link up.
-  - **Failure rate.** At 20–50 ppm the emulated still link was up most of the time, while on hardware every request failed.
+- **Relation to the open question** in [`README.md`](../../devices/glorious-series-one-pro/README.md#open-questions): on hardware a still, awake mouse answers relayed requests, but the receiver's link flag (`0x89`, polled every 3 ms) drops for `40.0 ms` (`01 → 00 → 01`) every ~`0.5`–`1.8 s`, and a request that meets a drop gets `0xA4` (**Verified**, 2026-11-17; [`receiver.md`](../../devices/glorious-series-one-pro/receiver.md) section 3). The first test (2026-11-13) had every relayed request fail while the mouse was still or only scrolling; the 2026-11-17 test did not reproduce that with the receiver's USB runtime power management set to `on`. A 300 s watch during normal use (2026-11-18) counted 233 drops in 195.4 s still and 3 in 98.5 s moving, which is the still-only pattern this mechanism predicts. This mechanism is a candidate for the drops, and it predicts a dependence on the host (SOF accuracy) and the unit (crystal). It does not explain everything (**Inferred**):
+  - **Scrolling.** A wheel change queues a type-1 record, which is resent until it gets through in the working slot and then resets the miss counters (4.4). So by these rules regular scrolling should keep the link up. It does (**Verified**, 2026-11-18): no drop in 63.3 s of steady scrolling with the mouse still.
+  - **Drop rate.** Whether a drop every ~`0.5`–`1.8 s` fits this unit's drift against this host's SOF is not known: the drift was not measured.
 
   **Unknown** on hardware; the checks are in section 8.
 
@@ -503,7 +503,7 @@ None of these has been run. Each needs the owner's go-ahead.
    - Expect keep-alives `02 xx yy` every 1 ms and ACKs about 70 µs after each.
    - Expect the connect exchange of 3.2, and the timing bits of 4.5.
 3. **Still-mouse link loss (4.5):**
-   - log the receiver's link flag (`0x89`) once a second while the mouse is still, on two hosts;
+   - done on one host (2026-11-17): the receiver's link flag (`0x89`), polled every 3 ms while the mouse was still, dropped for `40.0 ms` every ~`0.5`–`1.8 s`. While moving it almost never dropped (3 drops in 98.5 s against 233 in 195.4 s still, 2026-11-18, `rx_link_watch.py`). While only scrolling it did not drop (63.3 s). Still to do: the same on a second host (poll every few ms; a 1 s poll misses a 40 ms drop);
    - with the sniffer, watch the keep-alive's position against SOF (timing bits `00` creeping earlier).
    - Prediction: drops only while still, and only where the mouse's clock is fast relative to that host's SOF.
 4. **Downlink wrap (4.3):** send 40 read-only relayed version queries in a row and look for a wrong reply. With 2-chunk requests none is expected; a request whose duplicated chunk is its last one would return a bogus group-0 reply.
