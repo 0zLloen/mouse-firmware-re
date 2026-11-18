@@ -13,7 +13,18 @@ Labels follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md#evidence-rules). Firmwar
 | Application | `258a:2031`, bcdDevice `0x0100`, product `Series One PRO Wireless`; three HID interfaces with the same report descriptors as the wired mouse (91 / 163 / 20 bytes) | **Verified** (`lsusb -v` and sysfs, 2026-11-12/13) |
 | Bootloader | `258a:2113` | **Inferred** (`FirmwareUpdate.exe` constant and the wireless `Config.ini` `BLPID = 2113`; never seen on USB) |
 | Official image | `0x00007000`–`0x0000EE03` (32,260 B), 2,020 HEX records, initial SP `0x200026E0`, `Reset_Handler` `0x000074C1` | **Verified** (`compx_hex_tool.py decode --target receiver`, 2026-11-13; SP and `Reset_Handler` are the first two little-endian words of the decoded image) |
-| MCU | nRF52 series with USB. The updater calls it an nRF52840 (`C52840Dongle`, `Config.ini` `ChipName = 00052840`), but the image uses only 32 KB of RAM (stack top `0x200026E0`, magic word at `0x20007FFC`) and no flash above `0x38FFF`, which also fits a 256 KB / 32 KB part such as the nRF52820. | **Inferred**; a photo of the receiver PCB would settle it |
+| MCU | nRF52 series with USB. The updater calls it an nRF52840 (`C52840Dongle`, `Config.ini` `ChipName = 00052840`), but the image uses only 32 KB of RAM (stack top `0x200026E0`, magic word at `0x20007FFC`) and no flash above `0x38FFF`, which also fits a 256 KB / 32 KB part such as the nRF52820. The image was not built for an nRF52840: it names no peripheral the nRF52820 lacks, and it has none of the nRF52840 `SystemInit()` errata literals that the mouse image has at `0x6B8C`–`0x6BA0` (NFCT `0x4000568C`, TEMP `0x4000C520`, QSPI `0x40029640`), and no GPIO P1 (section 1.1). | **Inferred**: probably an nRF52820; a photo of the receiver PCB would settle it |
+
+### 1.1 Which chip (2026-11-18)
+
+- **Verified** (read from the official images with [`re-scripts/periph_scan.py`](re-scripts/README.md)): the receiver image's literals name only POWER/CLOCK, RADIO, GPIOTE, TIMER0, TIMER1, TIMER3, RTC0, RTC1, WDT, NVMC, PPI, USBD, FICR and GPIO P0. All of these exist on the nRF52820. The mouse image, run through the same scan, names GPIO P1, NFCT, SAADC, PWM0, PWM1, SPIM2, QSPI and TIMER4, none of which the nRF52820 has.
+- **Inferred**: the receiver is an nRF52820. It is the only nRF52 with USB and 32 KB of RAM (the nRF52833 has 128 KB, the nRF52840 256 KB), and both images put the bootloader magic word in the top word of their RAM (`0x2003FFFC` on the mouse, `0x20007FFC` here). An image built for an nRF52820 also runs on the larger parts, so this does not rule out an nRF52833 or nRF52840 on the board. The updater's `C52840Dongle` and `ChipName = 00052840` are shared with the mouse package and say nothing about the receiver.
+- Online search, 2026-11-18. Nothing public shows this receiver's board:
+  - The FCC filing `2AXP2-SP22` covers the mouse only; its internal photos (photos 9–14) show the mouse PCBs and the battery, no receiver. None of the 34 FCC IDs of grantee `2AXP2` (<https://fccid.io/2AXP2>) is named as a Series One Pro receiver.
+  - Glorious sells no replacement: its "Wireless Mouse Receiver Kit (PRO Series)" is for the "V2 PRO mice" and is listed as "Not compatible with Forge PRO mice" (<https://www.gloriousgaming.com/products/wireless-mouse-receiver-kit-pro-series>).
+  - `2AXP2-DK22` ("Dongle Kit V2", 2405–2476 MHz) is a different board for other mice.
+  - Nordic's 2021 press release on another Glorious mouse, the Model O Wireless, names an nRF52840 for the mouse and an nRF52820 for its receiver (<https://www.nordicsemi.com/Nordic-news/2021/10/Glorious-Model-O-Wireless-mouse-and-PC-uses-nRF52840-and-nRF52820>). It does not mention the Series One Pro.
+  - No teardown, firmware analysis or protocol notes for `258a:2031` / `258a:2113` were found.
 
 ## 2. Request routing
 
@@ -38,6 +49,16 @@ All **Verified** on a retail receiver and mouse, 2026-11-13, unless marked:
 - It copies back as many reply bytes as the **request** asked for (`body[3] + 6`), not as many as the mouse sent. The rest of the 64 bytes is stale. The stock version query (`body[3] = 0x06`) therefore returns 12 bytes; with `body[3] = 0x0A` it returns 16.
 - `0xA4` means the mouse cannot be reached. It can be transient: a `SAVE_FLASH` of the open-directional-dpi patch erases a flash page, which stalls the mouse's radio. The receiver then answers `0xA4` after about 270 ms, and the real reply still arrives after about 770 ms (`rf_save_probe.py`). Hosts poll to a deadline and treat only a final `0xA4` as an unreachable mouse; open-directional-dpi hosts then check the link (`0x89`, section 4) and send the request once more (host code, checked against fakes only; not yet run on hardware).
 - While the mouse is awake and still (`0` motion reports on interface 0, receiver `power/control = on`, `runtime_status = active`), it **does** answer relayed requests (`0x81`, `0x85`, `0x86`, group 3 `0x80`, and `GET_CAPABILITIES` in `8`–`24 ms`), but receiver-local `0x89` (`link state`, polled every 3 ms) shows brief **`40.0 ms` link drops (`01 → 00 → 01`)** every ~`0.5`–`1.8 s` (**Verified**, 2026-11-17). A relayed request sent during a `40.0 ms` `00` window returns `0xA4` immediately (`4.0 ms`), and a multi-chunk request/reply interrupted by a drop returns `0xA4` after `128`–`248 ms`; retrying once ~`60 ms` later succeeds in `20.0 ms`. Why the link drops for `40.0 ms` every ~`0.5`–`1.8 s` while still is **Unknown**.
+- The drops depend on motion (**Verified**, 2026-11-18, [`re-scripts/rx_link_watch.py`](re-scripts/README.md): `0x89` polled every 3 ms for 300 s of normal desktop use, with the input reports of interface 0 read alongside; `power/control = on`, `runtime_status = active`, every poll answered):
+
+  | Mouse in the 300 ms before | Time | Drops | Rate | Length |
+  | :--- | :--- | :--- | :--- | :--- |
+  | Still (no report) | 195.4 s | 233 | 1.19 per second | 24–632 ms, median 32 ms |
+  | Moving (X/Y reports) | 98.5 s | 3 | 0.03 per second | 88, 304 and 624 ms |
+  | Buttons only | 6.0 s | 0 | | |
+  | Scrolling only (second run, 75 s, wheel rolled steadily) | 63.3 s | 0 | 0 per second | |
+
+  In the second run the 8.6 s counted as still (pauses in the scrolling) had 6 drops of 24–40 ms. So wheel reports keep the link up as motion reports do. A poll round trip takes about 4 ms plus the 3 ms pause, so lengths are good to about 8 ms (the 32 ms median is the `40.0 ms` above). A drop is counted under what the mouse did in the 300 ms before the flag fell, so the three "moving" drops may have begun just after the mouse stopped; they are also longer than the still ones. This is what the drift mechanism of [`radio-protocol.md`](../../platforms/compx-nrf52/radio-protocol.md#45-phase-control-ack-timing-bits) 4.5 predicts (drops while still, none while moving or scrolling); it does not prove that mechanism.
 - With build `21ea252` a `SAVE_FLASH` of a changed profile answered in 402 ms, and an identical second one in 24 ms with no page erase and no `0xA4`: the patch skips an unchanged save. A profile saved through the receiver survived switching the mouse off and on, and its curve applied over the radio (up/down count ratio 0.681 with up at 0.5x, against 0.938 flat in the earlier `wl_capture.py` test).
 - **Inferred** (receiver disassembly and Unicorn emulation of the receiver image, 2026-11-13), when `0xA4` comes and what happens to a request:
   - There is no per-request timeout. A relayed request gets `0xA4` only (a) at once, when the link flag `0x20000056` is already `0` (`@ 0x0000C9C8`–`0x0000C9EA`), or (b) when the receiver declares the link lost after 256 one-millisecond frames without a CRC-good mouse packet (`@ 0x0000DA48`–`0x0000DAB0`, and `0x0000DD0C`–`0x0000DD48` on receive-window timeouts). It hops after 2 missed frames, starts a new round after 4 hops and gives up after 32 rounds. The frame start `0x0000D9F4` runs on each USB SOF (`0x0000E77C`), or on the receiver's own `TIMER1` while it is suspended (`0x000077FA`).
@@ -70,6 +91,6 @@ The application-to-bootloader packet of the wired mouse (`body[3] = 0x01`, `body
 ## 6. Open questions
 
 - The receiver bootloader (`258a:2113`): never seen enumerating; its `Erase` extent and address limits are untested.
-- The exact MCU part (section 1).
+- The exact MCU part (section 1.1): probably an nRF52820; only the chip marking would settle it, and no photo of this receiver's board is public.
 - Mode values other than `0xB0` (`0xA0`, `0xC0`).
-- Why the link drops for `40.0 ms` (`0x89`: `01 → 00 → 01`) every ~`0.5`–`1.8 s` while the mouse is still (section 3).
+- Why the link drops for `40.0 ms` (`0x89`: `01 → 00 → 01`) every ~`0.5`–`1.8 s` while the mouse is still, and almost never while it moves or scrolls (section 3). Still to measure: a second host.

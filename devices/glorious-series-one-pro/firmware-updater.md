@@ -155,7 +155,12 @@ Each package carries one `Config.ini` whose `[Nordic]` section names one image a
   - Updates `258a:2018` -> `258a:2103` (`C52840Dongle(0x258A, 0x2018, 0x2103, ..., isDongle=false)`, decompiled `Form1::InitDevice()`).
 - **`v1.0.0.0_20220810_Series_One_ProFirmwareWireless.exe` (receiver)**:
   - `XVI.zip` holds `CM2856_Receiver_USB_v1.00.00_20220810.hex` and no mouse image; `Config.ini`: `BLPID = 2113`, `NewPID = 2031`.
-  - So it updates only the receiver (`258a:2031` -> `258a:2113`). An earlier version of this section said it updates the mouse and the receiver in turn and needs both plugged in (`deviceList.Count == 2`); that is **Unknown** until `Form1::StartUpdateThread()` is re-read. Nothing points to over-the-air (RF) flashing.
+  - So it updates only the receiver (`258a:2031` -> `258a:2113`), and the mouse does not have to be plugged in. **Verified** by reading the IL of `FirmwareUpdate.exe` (SHA-256 `37ae7be7…`, the same file in both packages) with dnfile 0.15.1 and dncil 1.0.2, 2026-11-18:
+    - There is no `Form1::StartUpdateThread()`; the start path is `BtnStart_Click` → `StartUpdater` → `NordicFirmwareUpdater840` → `NordicFirmwareUpdater840ByDeviceID`.
+    - `StartUpdater` (chip name containing `840`) calls `NordicFirmwareUpdater840(VID, PID)` once for each of the bootloader, old and new device that is connected (`bBLDeviceConnected`, `bOldDeviceConnected`, `bNewDeviceConnected`) and returns true if any is. It does not count devices.
+    - `NordicFirmwareUpdater840` runs `NordicFirmwareUpdater840ByDeviceID(byteDeviceID, hexHelper)` when `FWFile` is not empty, and a second pass with `byteDeviceID + 1` and `hexHelper2` only when `FWFile2` is not empty (`Config.ini` keys `FWFile` / `FWFile2` load the fields `strFirmwareFile` / `strFirmwareFile810`). Both Series One Pro packages have an empty `[Nordic] FWFile2` and `[Debug] DeviceID = 0`, so each makes one pass with device ID 0.
+    - The only `get_Count` calls in `Form1` are three in `HidProgram`; the others in the file are on list boxes in the `InitUI` of three debug forms. None is on a device list. An earlier version of this section said the updater needs both devices plugged in (`deviceList.Count == 2`); nothing in the IL does that.
+    - What a second pass with device ID 1 would address (a package with `FWFile2` set) is **Unknown**; no Series One Pro package uses it. Nothing points to over-the-air (RF) flashing.
 
 ---
 

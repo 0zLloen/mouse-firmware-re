@@ -1,5 +1,7 @@
 # Glorious Series One Pro — Draft ZMK Board (Untested on Hardware)
 
+[ZMK](https://zmk.dev) is an open-source firmware for keyboards and mice, built on Zephyr. It is not part of the original Glorious firmware and shares no code with it: this folder is a draft of a full replacement for the stock image. The firmware that has run on this mouse is the stock image and [open-directional-dpi](https://github.com/0zLloen/open-directional-dpi), which patches the stock image and keeps everything else as it is.
+
 > **Status:** builds on ZMK main (Zephyr 4.1, HWMv2) as of 2026-11-12; never flashed to a mouse.
 > Pins and peripherals are Inferred from disassembly of `CM2856_Mouse_USB_v1.00.00_20220810.hex`.
 >
