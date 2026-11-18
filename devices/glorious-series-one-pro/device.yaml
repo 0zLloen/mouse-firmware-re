@@ -25,10 +25,12 @@ usb:
     source: lsusb -v on a real receiver, 2026-11-12; descriptor lengths from /sys/class/hidraw/*/device/report_descriptor, 2026-11-13; relaying and local commands in receiver.md
   - role: bootloader
     vid_pid: "258a:2103"
+    bcd_device: "0x0200"
     manufacturer: Glorious
     product: Glorious bootloader
+    report_descriptor_lengths: [20]
     evidence: verified
-    source: lsusb on a retail mouse after compx_usb_flasher.py dump sent the updater's SetBLDeviceMode packet, 2026-11-13; GetBLFW answered b0 01 00 00
+    source: lsusb on a retail mouse after compx_usb_flasher.py dump sent the updater's SetBLDeviceMode packet, 2026-11-13; GetBLFW answered b0 01 00 00; bcdDevice, the single interface 0 and its 20-byte report descriptor from lsusb -v and sysfs, 2026-11-18
   - role: receiver-bootloader
     vid_pid: "258a:2113"
     evidence: inferred
@@ -136,7 +138,7 @@ flash_layout:
     source: CM2856_Receiver_USB_v1.00.00_20220810.hex @ 0x000097BC (loads 0x24 bytes from 0x38000) and @ 0x0000C6FC (erases the page and writes them back), disassembly; see receiver.md
 
 bootloader:
-  protocol: Compx USB HID ISP, 64-byte Feature reports on interface 2 (usage page 0xFFFF), payload XOR 0x55 on the wire; see platforms/compx-nrf52/bootloader-protocol.md
+  protocol: Compx USB HID ISP, 64-byte Feature reports (usage page 0xFFFF, usage 0x00) on the bootloader's only interface, 0 (the application has the same collection on interface 2), payload XOR 0x55 on the wire; see platforms/compx-nrf52/bootloader-protocol.md
   entry: Feature report feat[2]=0x00 (deviceID), feat[3]=0x01, feat[6]=0xB0, rest 0 ("set device mode" to 0xB0); the application then writes 0xA55AA55A to SRAM 0x2003FFFC and resets
   evidence: verified
   source: packet read from FirmwareUpdate.exe 1.0.8229.18185 IL (C52840Dongle::SetBLDeviceMode) and tested on a retail mouse, 2026-11-13; the magic-word path is CM2856_Mouse_USB_v1.00.00_20220810.hex @ 0x000151AC (group body[4] = 0) -> 0x00014788 (command body[5] = 0x00) -> 0x00014824 (mode compare) -> 0x0001484C (store) -> 0x000071B8 (reset), disassembly and Unicorn emulation (inferred); Erase clears 0x1E000 and up but keeps 0x6000-0x1DFFF, and Program is read-modify-write (both verified 2026-11-13); Erase does not reach 0x7E000 (a profile saved there survived two full flashes, verified 2026-11-13); whether it reaches 0x88000+ is unknown

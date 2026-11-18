@@ -24,7 +24,7 @@ CONFIG_USB_DEVICE_MANUFACTURER="Glorious"
 CONFIG_USB_DEVICE_PRODUCT="Series One PRO (ZMK)"
 CONFIG_USB_HID_POLL_INTERVAL_MS=1
 
-# Sensor (P0.26) and LED (P0.14) power enables are regulator-fixed nodes with regulator-boot-on
+# P0.26 (high) and P0.14 (low) are regulator-fixed nodes held at the levels the stock firmware sets
 CONFIG_REGULATOR=y
 
 # Scroll wheel (alps,ec11 on P0.29/P0.02)

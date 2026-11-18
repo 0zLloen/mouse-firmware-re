@@ -85,7 +85,7 @@ Disassembly of `0x0000BD80`–`0x0000BF30` (flash page erase/write wrapper) and 
 | `0x00080000` – `0x00087FFF` | `32 KiB` | Guard band, unused by stock as far as the disassembly shows | — |
 | `0x00088000` – `0x00088FFF` | `4 KB` | **System Config Page `0x88`** (`32` bytes + CRC-16 at `+0x1E`, factory/RF pairing data) | Read/written at `0x14700`–`0x14770` (`page 0x88`) |
 | `0x0008B000` – `0x0008BFFF` | `4 KB` | **Active Profile Config Page `0x8B`** (`0x266` = `614` bytes, CRC-16 at `+0x264`, factory defaults at `0x0001A3B8`) | Read/written at `0x14668`–`0x146B4` (`page 0x8B`) |
-| `0x0008C000` – `0x0008CFFF` | `4 KB` | **Extended Config Page `0x8C`** (`0x4CB` = `1227` bytes, CRC-16 at `+0x4C9`) | Read/written at `0x146B8`–`0x14700` (`page 0x8C`) |
+| `0x0008C000` – `0x0008CFFF` | `4 KB` | **Macro directory, page `0x8C`** (`0x4CB` = `1227` bytes, CRC-16 at `+0x4C9`; 100 entries and a page bitmap for macro data at `0x90000`–`0xDFFFF`, [`firmware-subsystems.md`](firmware-subsystems.md) 3.5) | Read/written at `0x146B8`–`0x14700` (`page 0x8C`) |
 | `0x00090000` – `0x000DFFFF` | `320 KB` | **Per-Button Macro & Profile Pages (`0x90..0xDF`)** | Erased/written by HID commands `0x07`–`0x09` |
 | `0x20000000` – `0x2000AF4F` | `~43.8 KiB` | Stock `RW`/`ZI` + stack (initial SP `0x2000AF50`; exact `RW`/`ZI` extent not measured) | Keil scatter map at `0x0001AAE4` |
 | `0x2000AF50` – `0x2003FFFB` | `~212 KiB` | Not used by stock as far as the scatter map shows (open-directional-dpi keeps its state at `0x2003F000` on that assumption) | Inferred |

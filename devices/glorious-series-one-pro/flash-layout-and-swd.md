@@ -124,7 +124,7 @@ USB read-back covers `0x00006000`–`0x0004D7FF` only (4.1a). Still without a ba
 | Item | Why | Without SWD? |
 | :--- | :--- | :--- |
 | Bootloader `0x00000000`–`0x00005FFF` | Its code has never been read: whether it clears the magic word, stays resident with `0xFF` at `0x6000`, or validates the image on `Exit` is Unknown. | Maybe. One read-only `VerifyByAddress` at `0x00000000` over USB. `compx_usb_flasher.py` refuses addresses below `0x6000`, so this needs a one-off the owner approves. |
-| `0x0004D800`–`0x000FFFFF`: the `0x7E000` settings page, pairing `0x88000`, profiles `0x8B000`/`0x8C000` | Unit-specific; `VerifyByAddress` answers `0xA2` there. | No. |
+| `0x0004D800`–`0x000FFFFF`: the `0x7E000` settings page, pairing `0x88000`, the profile config `0x8B000`, the macro directory `0x8C000` and macro data `0x90000`–`0xDFFFF` ([`firmware-subsystems.md`](firmware-subsystems.md) 3.5) | Unit-specific; `VerifyByAddress` answers `0xA2` there. | No. |
 | UICR (`0x10001000`), `APPROTECT` | Decides whether SWD can read anything at all. | No: `APPROTECTSTATUS` over the CTRL-AP (section 5, step 2). |
 | The exact upper bound of `Erase` | Known only up to `0x0004D7FF`, plus "not `0x7E000`". | No: read `0x88000` before and after one `Erase`. |
 | SWD pad order | Inferred from photos (2.2). | Yes: passive continuity check, section 5 step 1. |

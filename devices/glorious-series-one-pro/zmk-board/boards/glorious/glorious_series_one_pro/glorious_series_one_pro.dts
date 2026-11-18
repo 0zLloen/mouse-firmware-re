@@ -64,7 +64,11 @@
         triggers-per-rotation = <24>;
     };
 
-    /* Peripheral Power Rail Enables (Inferred from 0x0000C61A & 0x0000C636; polarity unconfirmed) */
+    /*
+     * Two outputs the stock firmware sets once at init and never touches again (roles unknown,
+     * firmware-subsystems.md 2.1): P0.26 high (0x0000C61A), P0.14 low (0x0000C636). Both are kept
+     * at the stock level: sensor_pwr is on at boot, led_pwr is left off (driven low).
+     */
     sensor_pwr: regulator-sensor-pwr {
         compatible = "regulator-fixed";
         regulator-name = "sensor-pwr-en";
@@ -76,7 +80,6 @@
         compatible = "regulator-fixed";
         regulator-name = "led-pwr-en";
         enable-gpios = <&gpio0 14 GPIO_ACTIVE_HIGH>;
-        regulator-boot-on;
     };
 
     /* Enable together with paw3370_bamf once a driver exists */

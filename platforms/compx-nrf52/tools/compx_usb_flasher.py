@@ -148,7 +148,7 @@ class HidapiTransport:
         The collection with Usage Page 0xFFFF, Usage 0x00: the app's Feature interface 2 (hardware.md 2.2).
         Interface 1 also has a 0xFFFF collection, with Usage 0x01 and input reports only. hidapi lists every
         top-level collection; on Windows each has its own path. Raises if more than one device matches.
-        The bootloader (258a:2103) is assumed to use the same pair: its report descriptor is not recorded yet.
+        The bootloader (258a:2103) has the same pair on its only interface (sysfs report descriptor, 2026-11-18).
         """
         found = self.hid.enumerate(vid, pid)
         paths = sorted({d["path"] for d in found if (d["usage_page"], d["usage"]) == (0xFFFF, 0x00)})
@@ -405,7 +405,7 @@ def enter_bootloader():
         return wait_for_device(VID_SINOWEALTH, PID_MOUSE_BL, timeout_s=10.0)
     except TimeoutError:
         listed = transport.hid.enumerate(VID_SINOWEALTH, PID_MOUSE_BL) if isinstance(transport, HidapiTransport) else []
-        if listed:  # it did re-enumerate; find() wants the app's usage pair, not yet recorded for the bootloader
+        if listed:  # it did re-enumerate; find() wants usage 0xFFFF/0x00, which this bootloader did not list
             usages = ", ".join(sorted({f"0x{d['usage_page']:04X}/0x{d['usage']:02X}" for d in listed}))
             raise RuntimeError(
                 "The mouse is in its bootloader (258a:2103), but hidapi lists no collection with Usage Page 0xFFFF, "

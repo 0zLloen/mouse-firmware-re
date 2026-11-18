@@ -596,11 +596,13 @@ def main():
 
 
 def run_ms(sim, m, r, a):
-    """Run a.ms milliseconds sampling the mouse's link flag C[6] every 1 ms; print the link episodes."""
-    flags = []
+    """Run a.ms milliseconds sampling the mouse's link flag C[6] and the receiver's link flag 0x20000056
+    (what its local command 0x89 returns) every 1 ms; print the link episodes."""
+    flags, rflags = [], []
     for ms in range(int(a.ms)):
         sim.run(ms * 1000.0 + 1000)
         flags.append(m.r8(0x2000361C + 6))
+        rflags.append(r.r8(0x20000056))
     if a.trace:
         show(sim)
     acks = [t for t, n, f, pkt in frames(sim) if n == 'rx' and f not in cr.PAIR_CHANNELS]
@@ -611,6 +613,10 @@ def run_ms(sim, m, r, a):
     print(f'first ACK {first and round(first, 3)} ms; mouse link flag up at {ups} ms, down at {downs} ms '
           f'({len(downs)} drops); up {up_pct:.1f} % of the time after the first link; '
           f'connect answers sent {sum(1 for t, n, f, p in frames(sim, lost=True) if n == "rx" and f in cr.PAIR_CHANNELS)}')
+    rdown = [i for i in range(1, len(rflags)) if rflags[i - 1] and not rflags[i]]
+    rup = [i for i in range(1, len(rflags)) if rflags[i] and not rflags[i - 1]]
+    print(f'receiver link flag (0x89): down at {rdown} ms, for '
+          f'{[next((u for u in rup if u > d), len(rflags)) - d for d in rdown]} ms')
 
 
 def demo(sim, m, r, a):

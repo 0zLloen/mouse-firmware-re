@@ -323,13 +323,25 @@ The rows are walked in order, wrapping, so after a loss each side keeps cycling 
 
   The 340 ms are 256 ms of hopping plus a failed first connect (3.3). At phases where the first connect works the link comes back sooner.
 
+  The receiver's own link flag (`0x20000056`, what its local command `0x89` returns) in 12 s runs of a still mouse (**Verified (emulation)**, 2026-11-19, `compx_coemu.py --ms 12000 --drift-ppm P`, which now prints this flag too):
+
+  | Mouse clock vs host SOF | Receiver flag drops | Each drop lasts |
+  | :--- | :--- | :--- |
+  | 20 ppm fast | 3, every 2.2 s | 337 ms |
+  | 50 ppm fast | 5, in groups about 4.9 s apart | 37, 5 and 26 ms |
+  | 100 ppm fast | 11, in groups of three every 2.9 s | 37, 5 and 26 ms |
+  | 200 ppm fast | 16, every 0.73 s | 340 ms |
+  | 400 ppm fast | 23, every 0.49 s | 39 ms |
+
+  So the receiver flag is down for either about 340 ms (the first connect fails) or 5 to 39 ms (it works), depending on the phase the drift produces.
+
 - **Why the fast mouse loses the link** (**Inferred**, from the runs above):
   1. A fast mouse drifts earlier relative to SOF. After the bits have pulled it below 150 µs, they say nothing more, and it drifts into the 0–70 µs window where the receiver is not yet listening.
   2. Keep-alives use only one slot parity, so it then misses every ACK, hops, and loses the link 256 ms later.
   3. While moving, the other slot (500 µs later) still gets through and resets the miss counters.
-- **Relation to the open question** in [`README.md`](../../devices/glorious-series-one-pro/README.md#open-questions): on hardware a still, awake mouse answers relayed requests, but the receiver's link flag (`0x89`, polled every 3 ms) drops for `40.0 ms` (`01 → 00 → 01`) every ~`0.5`–`1.8 s`, and a request that meets a drop gets `0xA4` (**Verified**, 2026-11-17; [`receiver.md`](../../devices/glorious-series-one-pro/receiver.md) section 3). The first test (2026-11-13) had every relayed request fail while the mouse was still or only scrolling; the 2026-11-17 test did not reproduce that with the receiver's USB runtime power management set to `on`. A 300 s watch during normal use (2026-11-18) counted 233 drops in 195.4 s still and 3 in 98.5 s moving, which is the still-only pattern this mechanism predicts. This mechanism is a candidate for the drops, and it predicts a dependence on the host (SOF accuracy) and the unit (crystal). It does not explain everything (**Inferred**):
+- **Relation to the open question** in [`README.md`](../../devices/glorious-series-one-pro/README.md#open-questions): on hardware a still, awake mouse answers relayed requests, but the receiver's link flag (`0x89`, polled every 3 ms) drops for `40.0 ms` (`01 → 00 → 01`) every ~`0.5`–`1.8 s`, and a request that meets a drop gets `0xA4` (**Verified**, 2026-11-17; [`receiver.md`](../../devices/glorious-series-one-pro/receiver.md) section 3). The first test (2026-11-13) had every relayed request fail while the mouse was still or only scrolling; the 2026-11-17 test did not reproduce that with the receiver's USB runtime power management set to `on`. A 300 s watch during normal use (2026-11-18) counted 233 drops in 195.4 s still and 3 in 98.5 s moving, which is the still-only pattern this mechanism predicts. This mechanism is the likely cause of the drops (**Inferred**: it reproduces their length and their still-only pattern, below), and it predicts a dependence on the host (SOF accuracy) and the unit (crystal). It does not explain everything (**Inferred**):
   - **Scrolling.** A wheel change queues a type-1 record, which is resent until it gets through in the working slot and then resets the miss counters (4.4). So by these rules regular scrolling should keep the link up. It does (**Verified**, 2026-11-18): no drop in 63.3 s of steady scrolling with the mouse still.
-  - **Drop rate.** Whether a drop every ~`0.5`–`1.8 s` fits this unit's drift against this host's SOF is not known: the drift was not measured.
+  - **Drop length and rate.** They fit. On hardware the receiver flag was down for `40.0 ms` (2026-11-17) and for 24–40 ms with a 32 ms median at about 8 ms resolution (2026-11-18), every ~`0.5`–`1.8 s`. In emulation it is down for 37–39 ms, every 0.49 s at 400 ppm and in groups a few seconds apart at 50–100 ppm (table above). The emulation was not tuned to the hardware numbers. This unit's drift against this host's SOF was not measured, and the emulated drop spacing does not rise steadily with the drift, so the spacing does not give the drift.
 
   **Unknown** on hardware; the checks are in section 8.
 
