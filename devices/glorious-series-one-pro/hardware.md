@@ -139,7 +139,7 @@ By disassembling the GPIO initialization routine (`0x0000C5B8`–`0x0000C648`), 
 | **Unknown output, driven high once at init** (earlier called a sensor power enable) | **`P0.26`** | `26` (`0x1A`) | Output | `0x0C61A`–`0x0C632` | **Inferred** |
 | **Unknown output, driven low once at init** (earlier called an LED power enable; no LED code touches it) | **`P0.14`** | `14` (`0x0E`) | Output | `0x0C636`–`0x0C64A` ([`firmware-subsystems.md`](firmware-subsystems.md) 2.1) | **Inferred** |
 | **LED 0 (status), `PWM0` ch 0 / 1 / 2** | **`P0.13`, `P0.15`, `P0.17`** | `13, 15, 17` | PWM output, looks active-high | config table `0x1A6D4`, init `0x0D91C` ([`firmware-subsystems.md`](firmware-subsystems.md) 2.1) | **Inferred** (pins **Verified** as table values) |
-| **LED 1 (DPI colour), `PWM1` ch 0 / 1 / 2** | **`P0.20`, `P0.22`, `P0.24`** | `20, 22, 24` | PWM output, looks active-high | config table `0x1A6E0` | **Inferred** (pins **Verified** as table values) |
+| **LED 1 (DPI colour, next to the sensor), `PWM1` ch 0 / 1 / 2 = R / G / B** | **`P0.20`, `P0.22`, `P0.24`** | `20, 22, 24` | PWM output, looks active-high | config table `0x1A6E0` | **Inferred** (pins **Verified** as table values; colours and place **Verified** by eye, 2026-11-19) |
 
 > **Important Note on `P0.09` and `P0.10` (NFC Pins)**:
 > Because Side Buttons 4 and 5 are routed to `P0.09` (`NFC1`) and `P0.10` (`NFC2`), any Zephyr or ZMK board definition **must** set `&uicr { nfct-pins-as-gpios; };` so `NRF_UICR->NFCPINS` is configured for GPIO operation. `CONFIG_NFCT_PINS_AS_GPIOS` is deprecated in Zephyr 4.1 (ZMK main).
