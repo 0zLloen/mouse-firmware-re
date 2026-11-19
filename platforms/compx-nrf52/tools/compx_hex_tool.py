@@ -18,8 +18,9 @@ receiver's limits are not known (no tool here flashes the receiver).
 Safety checks (audit_binary_safety, mouse images only):
   1. Image starts exactly at the application base 0x6000,
      where the bootloader looks for the vector table.
-  2. Image ends at or below 0x7E000 (bootloader at 0x0..base, stock pairing/profile pages
-     at 0x88000+ stay untouched by Program; the Erase extent is defined by the bootloader).
+  2. Image ends at or below 0x36800. The Series One Pro bootloader stores image byte 0x6000 + n at
+     0x4D800 + n before Exit copies it into place, so a longer image would overwrite the 0x7E000
+     settings page (0x8B000 profiles from 0x43800, 0x8C000 macro directory from 0x44800).
   3. Initial SP is 8-byte aligned and inside SRAM (0x20000000 < SP <= 0x2003FFF0).
   4. Reset_Handler is a Thumb address after the 0x100-byte vector table and inside the image.
   5. Heuristic only: the image contains the re-entry magic value 0xA55AA55A as a 32-bit literal.
@@ -35,7 +36,7 @@ from pathlib import Path
 MOUSE_APP_BASE = 0x00006000
 RECEIVER_APP_BASE = 0x00007000
 TARGETS = {"mouse": MOUSE_APP_BASE, "receiver": RECEIVER_APP_BASE}
-MOUSE_SAFE_LIMIT = 0x0007E000
+MOUSE_SAFE_LIMIT = 0x00036800  # 0x7E000 - 0x47800 (bootloader-protocol.md 3)
 VECTOR_TABLE_SIZE = 0x100  # nRF52840: 16 system + 48 IRQ entries
 BOOTLOADER_MAGIC_VAL = 0xA55AA55A
 
@@ -154,7 +155,7 @@ def audit_binary_safety(bin_data: bytes, base_addr: int = MOUSE_APP_BASE, app_ba
 
     checks = {
         "vector_table_at_app_base": base_addr == app_base,
-        "ends_below_0x7E000": end_addr <= MOUSE_SAFE_LIMIT,
+        "ends_below_0x36800": end_addr <= MOUSE_SAFE_LIMIT,
         "valid_initial_sp_in_sram": 0x20000000 < sp_init <= 0x2003FFF0 and sp_init % 8 == 0,
         "valid_thumb2_reset_handler": (
             (reset_handler & 1) == 1 and base_addr + VECTOR_TABLE_SIZE <= reset_addr < end_addr

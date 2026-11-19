@@ -8,7 +8,9 @@ This document evaluates hardware-level Serial Wire Debug (SWD) programming and r
 > **Never execute `nrfjprog --recover`, `openocd -c "nrf52_recover"`, `CTRL-AP ERASEALL`, mass erase, or UICR erase without explicit approval and a verified full-chip backup.**
 > Executing a CTRL-AP mass erase wipes the entire 1 MB internal flash (`0x00000000`–`0x000FFFFF`) AND `UICR` (`0x10001000`), which permanently destroys:
 > 1. The **24 KB Compx USB HID Bootloader (`0x00000000`–`0x00005FFF`)**, which is **not** distributed inside the official `.hex` updater files (the `.hex` file only contains `0x00006000`–`0x0001CC8F`).
-> 2. The **factory 2.4 GHz wireless receiver pairing & calibration page (`0x00088000`–`0x00088FFF`)**.
+> 2. The unit's settings pages (`0x7E000`, `0x8B000`, `0x8C000`) and UICR.
+>
+> **Verified on a retail unit (2026-11-19): `APPROTECT` is enabled** (`UICR.APPROTECT` = `0xFFFFFF00`). SWD cannot read this chip; the only way to open it is that erase. The full flash, FICR and UICR were read instead through a debug build of the patch running on the mouse ([`bootloader-protocol.md`](../../platforms/compx-nrf52/bootloader-protocol.md) section 3). The SWD material below is kept for other units.
 
 ---
 
@@ -47,12 +49,13 @@ Inspection of the FCC internal photographs (`https://fccid.io/2AXP2SP22`) for th
    - On `QIAAD0`, access port protection is controlled solely by `NRF_UICR->APPROTECT` (`0x10001208`):
      - `0xFFFFFFFF`: **Unprotected (`Disabled`)** — full non-destructive SWD read/write access to all flash (`0x00000000`–`0x000FFFFF`), RAM (`0x20000000`–`0x2003FFFF`), and UICR (`0x10001000`–`0x10001FFF`) is immediately available!
      - `0x00000000` (or `!= 0xFF`): **Protected (`Enabled`)** — the AHB-AP (`AP[0]`) is disabled at boot, while the Nordic Control Access Port (`CTRL-AP`, `AP[1]`) remains accessible.
-2. **Does Compx Stock Firmware Enable `APPROTECT` in Software?**
+2. **Is `APPROTECT` enabled?** **Yes, on the unit read (Verified, 2026-11-19)**: `UICR.APPROTECT` = `0xFFFFFF00`, so factory programming set it. That unit's `FICR INFO.VARIANT` is `AAC0`. The analysis below of the application images still holds: they do not set it themselves.
+3. **Does Compx Stock Firmware Enable `APPROTECT` in Software?**
    - **Verified: NO!**
    - We scanned the entire `CM2856_Mouse_USB_v1.00.00_20220810.hex` (`mouse_fw.bin`) and `CM2856_Receiver_USB_v1.00.00_20220810.hex` (`receiver_fw.bin`) for references to `0x10001000` (`NRF_UICR_BASE`), `0x10001208` (`UICR->APPROTECT`), and `0x40000558` (`APPROTECT.DISABLE`).
    - Neither firmware image contains any code that checks or writes `UICR->APPROTECT`.
    - Furthermore, the Compx USB HID Bootloader (`258a:2103`) actually exposes the **`VerifyByAddress` (`0x83`) USB command**, which reads back raw flash bytes (XORed with `0x55`) over USB!
-   - Whether factory programming set `UICR->APPROTECT` in the UICR sector (`0x10001208`) during manufacturing is **Unknown** without passive SWD `AP[1]` register inspection (`APPROTECTSTATUS` at `AP[1]` offset `0x00C`), which is completely non-destructive.
+   - Factory programming did set `UICR->APPROTECT` (above).
 
 ---
 
@@ -64,28 +67,31 @@ Inspection of the FCC internal photographs (`https://fccid.io/2AXP2SP22`) for th
 0x00000000 +-------------------------------------------------------+
            | Compx Resident USB HID Bootloader (24 KB)             |
            | USB VID:PID = 258a:2103                               |
-           | Presumably checks *(u32 *)0x2003FFFC == 0xA55AA55A    |
+           | Flag page 0x5000 decides: application or bootloader   |
 0x00006000 +-------------------------------------------------------+
-           | Application Firmware Region (480 KiB, ..0x0007DFFF)   |
-           | USB flash/verify limit 0x0004D7FF (0xA2 from 0x4D800) |
+           | Application (images must end at or below 0x36800)     |
            | Stock CM2856_Mouse_USB occupies 0x00006000..0x0001CC8F|
            | Custom ZMK / Patched FW links at 0x00006000           |
+0x0004D800 +-------------------------------------------------------+
+           | Bootloader's second copy of the application           |
+           | (0x4D800..0x94FFF, overlapping the pages below):      |
+           | Program / VerifyByAddress act here, Exit copies it    |
+           | to 0x6000                                             |
 0x0007E000 +-------------------------------------------------------+
-           | Custom NVS / Extension Storage (8 KiB)                |
-           | Dedicated flash pages 0x7E..0x7F (never touches stock)|
+           | Custom settings, 8 KiB (inside the 2nd copy range:    |
+           | kept only while images end below 0x36800)             |
 0x00080000 +-------------------------------------------------------+
            | Reserved Guard Band (32 KB)                           |
 0x00088000 +-------------------------------------------------------+
-           | Stock System & RF Pairing Page (Page 0x88, 4 KB)      |
-           | 32-byte struct + CRC-16 at +0x1E (DO NOT OVERWRITE!)  |
+           | Page 0x88: blank on the unit read (no pairing data)   |
 0x0008B000 +-------------------------------------------------------+
-           | Stock Active Profile Page (Page 0x8B, 4 KB)           |
+           | Stock profile config, all 3 profiles (Page 0x8B)      |
            | 614-byte struct + CRC-16 at +0x264                    |
 0x0008C000 +-------------------------------------------------------+
-           | Stock Extended Config Page (Page 0x8C, 4 KB)          |
+           | Macro directory (Page 0x8C, 4 KB)                     |
            | 1227-byte struct + CRC-16 at +0x4C9                   |
 0x00090000 +-------------------------------------------------------+
-           | Stock Macro & Button Profile Pages (Pages 0x90..0xDF) |
+           | Macro data pages 0x90..0xDF (blank on the unit)       |
 0x000E0000 +-------------------------------------------------------+
            | Unused Upper Flash (0x000E0000..0x000FFFFF, 128 KB)   |
 0x00100000 +-------------------------------------------------------+
@@ -95,41 +101,41 @@ Inspection of the FCC internal photographs (`https://fccid.io/2AXP2SP22`) for th
 
 `compx_usb_flasher.py dump` on a retail mouse (firmware v1.0.0.0), entering the bootloader with the updater's own SetBLDeviceMode packet:
 
-- `VerifyByAddress` returns data for `0x00006000`–`0x0004D7FF` and status `0xA2` from `0x0004D800` up. **USB read-back cannot reach the `0x7E000` settings page or the `0x88000`+ pairing/profile pages**, so a USB-only backup does not protect them. Only SWD could read them.
-- `0x00006000`–`0x0001CC8F` is byte-identical to `CM2856_Mouse_USB_v1.00.00_20220810.hex`.
-- Non-blank data that the official image does not explain sits at `0x0001CD00`–`0x0001D68F` (about 2.4 KB, right after the stock image, where the open-directional-dpi patch links), `0x00036790`–`0x0003688F`, `0x00043790`–`0x00043A8F` and `0x00044790`–`0x00044D8F`. The block at `0x0001CD00` disassembles as Thumb code that starts by reading `NRF_P1->IN` (`0x50000810`), like the open-directional-dpi boot hook: it is an earlier patch build (**Verified**: the unit's owner had flashed one before restoring stock). It survived because `Erase` keeps `0x6000`–`0x1DFFF` and a stock image never writes past `0x1CC8F`. The other three blocks were cleared by the next `Erase` (`0x1E000` and up).
+- `VerifyByAddress` returns data for `0x00006000`–`0x0004D7FF` and status `0xA2` from `0x0004D800` up. As found on 2026-11-19, it reads at address + `0x47800`: the bootloader's second copy at `0x4D800`–`0x94FFF`, not the running application ([`bootloader-protocol.md`](../../platforms/compx-nrf52/bootloader-protocol.md) section 3).
+- `0x00006000`–`0x0001CC8F` (in the second copy) is byte-identical to `CM2856_Mouse_USB_v1.00.00_20220810.hex`.
+- Non-blank data that the official image does not explain sits at `0x0001CD00`–`0x0001D68F` (about 2.4 KB, right after the stock image, where the open-directional-dpi patch links), `0x00036790`–`0x0003688F`, `0x00043790`–`0x00043A8F` and `0x00044790`–`0x00044D8F`. The last three are the settings pages `0x7E000`, `0x8B000` and `0x8C000`, seen through the `+0x47800` offset (2026-11-19). The block at `0x0001CD00` disassembles as Thumb code that starts by reading `NRF_P1->IN` (`0x50000810`), like the open-directional-dpi boot hook: it is an earlier patch build (**Verified**: the unit's owner had flashed one before restoring stock). It survived because `Erase` changes no flash and a stock image never writes past `0x1CC8F`. The other three blocks were cleared by the next `Erase` (`0x1E000` and up).
 - The same day the open-directional-dpi patched image (`0x6000`–`0x1D9DF`) was flashed with `compx_usb_flasher.py flash`: `Erase`, `0xFF` written to `0x6000`, everything else programmed and read back, the vector table last, then `Exit`. The mouse booted it: the version reply carries the patch's `DP01` stamp and its configuration protocol answers. Later that day the official `.hex` was restored the same way (read back, booted, no `DP01` stamp) and the patched image flashed again. A profile the patch had saved at `0x7E000` before both flashes was still there afterwards, so `Erase` does not reach `0x7E000`.
 - The first build with the 2.4 GHz relay (open-directional-dpi `505404c`) programs `0x6000`–`0x1DA5F` (96,864 B, decoded image SHA-256 `0ed3cb4b74d0ab5192f3708c40b25be52912c91876b973d0d8d3b821c17b794a`). The build on the mouse now is `21ea252`, flashed with `compx_usb_flasher.py flash` on 2026-11-13 with every byte read back: `0x6000`–`0x1DADF` (96,992 B, decoded image SHA-256 `34d827d537816fff3e5595bbe4c7b736e6af428a724f4732307385911f422c34`), `0x6020`–`0x1DADF` programmed first and the vector-table block at `0x6000` last. The patch's linker region now ends at `0x1E000` (`stock_ddpi_patch.ld`), so a later build cannot grow into the range `Erase` clears without failing the link.
 - The dump is not published (it is unit-specific); its SHA-256 for this unit is `a3b734ce3c5496fb3459a75791af55421facf20af5845313fd82f7ee100e72da`.
 
-### 4.2 Why Preserving `0x00000000`–`0x00005FFF` and `0x00088000` is Essential
+### 4.2 Why Preserving `0x00000000`–`0x00005FFF` is Essential
 
 1. **Bootloader (`0x00000000`–`0x00005FFF`)**:
    - The official updater (`CM2856_Mouse_USB_v1.00.00_20220810.hex`) begins at `0x00006000`. It does **not** include the first 24 KB of flash (`0x00000000`–`0x00005FFF`).
-   - USB reads stop at `0x0004D7FF` (4.1a), so the pairing page cannot be read over USB. Only `0x00000000`–`0x00005FFF` is untried: if `VerifyByAddress` answers below `0x6000`, the bootloader can be backed up without SWD (4.3).
-2. **Radio Pairing Info (`0x00088000`)**:
+   - `VerifyByAddress` refuses it and SWD is locked; it was read through a debug build of the patch (2026-11-19). Nothing can restore it if it is lost.
+2. **`0x00088000`** (once thought to hold radio pairing data):
    - Disassembly of `0x00014700`–`0x00014770` shows that page `0x88` (`0x00088000`) holds the 32-byte system configuration block protected by CRC-16 at offset `+0x1E`, used by the proprietary 2.4 GHz radio stack (`NRF_RADIO` ISR at `0x00006711`) to authenticate with the `258a:2031` wireless receiver.
-   - `Program` never writes it while custom firmware stays within `0x00006000`–`0x0007FFFF`. Whether `Erase` reaches it is **Unknown**; **Inferred** not: the mouse still linked to its receiver after at least five `Erase` runs on 2026-11-13.
+   - **Verified** blank on a retail unit (2026-11-19).
    - **Disputed** by the radio analysis ([`radio-protocol.md`](../../platforms/compx-nrf52/radio-protocol.md#31-address-and-pairing) 3.1):
      - the v1.00.00 application never references `0x88000`;
      - the 32-byte CRC block is the config struct on page `0x8A000`;
      - the link identity is the chip's `FICR DEVICEID[0]`, not flash.
 
-     So the link surviving `Erase` says nothing about this page, and what it holds is **Unknown** until it is read.
+     The blank page settles it: the unit stores no pairing data in flash.
 
-### 4.3 What Still Needs SWD
+### 4.3 What Was Left for SWD, and How It Was Read Instead
 
-USB read-back covers `0x00006000`–`0x0004D7FF` only (4.1a). Still without a backup or an answer:
+Everything this section used to list was read on 2026-11-19 without SWD, through a debug build of the open-directional-dpi patch that reads memory from inside the running application ([`bootloader-protocol.md`](../../platforms/compx-nrf52/bootloader-protocol.md) section 3):
 
-| Item | Why | Without SWD? |
-| :--- | :--- | :--- |
-| Bootloader `0x00000000`–`0x00005FFF` | Its code has never been read: whether it clears the magic word, stays resident with `0xFF` at `0x6000`, or validates the image on `Exit` is Unknown. | Maybe. One read-only `VerifyByAddress` at `0x00000000` over USB. `compx_usb_flasher.py` refuses addresses below `0x6000`, so this needs a one-off the owner approves. |
-| `0x0004D800`–`0x000FFFFF`: the `0x7E000` settings page, pairing `0x88000`, profiles `0x8B000`/`0x8C000` | Unit-specific; `VerifyByAddress` answers `0xA2` there. | No. |
-| UICR (`0x10001000`), `APPROTECT` | Decides whether SWD can read anything at all. | No: `APPROTECTSTATUS` over the CTRL-AP (section 5, step 2). |
-| The exact upper bound of `Erase` | Known only up to `0x0004D7FF`, plus "not `0x7E000`". | No: read `0x88000` before and after one `Erase`. |
-| SWD pad order | Inferred from photos (2.2). | Yes: passive continuity check, section 5 step 1. |
+| Item | Result |
+| :--- | :--- |
+| Bootloader `0x00000000`–`0x00005FFF` | Read and disassembled: two-copy update scheme, flag page `0x5000`, its own Back + Forward + DPI recovery chord |
+| `0x0004D800`–`0x000FFFFF` | The bootloader's second copy at `0x4D800`; the `0x7E000`, `0x8B000` and `0x8C000` pages in use; `0x88000` and `0x90000` up blank |
+| UICR, `APPROTECT` | `APPROTECT` enabled (`0xFFFFFF00`): SWD cannot read this unit |
+| The extent of `Erase` | It changes no flash |
+| SWD pad order | No longer needed for a backup; still Inferred (2.2) |
 
-SWD stays read-only: `APPROTECTSTATUS` first, never `recover` or `ERASEALL`.
+SWD on another unit stays read-only: `APPROTECTSTATUS` first, never `recover` or `ERASEALL`.
 
 ---
 

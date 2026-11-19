@@ -25,10 +25,12 @@ usb:
     source: lsusb -v on a real receiver, 2026-11-12; descriptor lengths from /sys/class/hidraw/*/device/report_descriptor, 2026-11-13; relaying and local commands in receiver.md
   - role: bootloader
     vid_pid: "258a:2103"
+    bcd_device: "0x0200"
     manufacturer: Glorious
     product: Glorious bootloader
+    report_descriptor_lengths: [20]
     evidence: verified
-    source: lsusb on a retail mouse after compx_usb_flasher.py dump sent the updater's SetBLDeviceMode packet, 2026-11-13; GetBLFW answered b0 01 00 00
+    source: lsusb on a retail mouse after compx_usb_flasher.py dump sent the updater's SetBLDeviceMode packet, 2026-11-13; GetBLFW answered b0 01 00 00; bcdDevice, the single interface 0 and its 20-byte report descriptor from lsusb -v and sysfs, 2026-11-18
   - role: receiver-bootloader
     vid_pid: "258a:2113"
     evidence: inferred
@@ -89,26 +91,26 @@ flash_layout:
     source: record addresses of CM2856_Mouse_USB_v1.00.00_20220810.hex; a retail unit's USB read-back of this range matches it byte for byte (2026-11-13)
   - start: "0x00006000"
     end: "0x0007DFFF"
-    name: application partition (compx_hex_tool.py audit limit; custom firmware lives here, and compx_usb_flasher.py writes only up to 0x4D7FF)
+    name: application partition (custom firmware lives here; images must end at or below 0x36800, see the source)
     evidence: inferred
-    source: repository convention (flash-layout-and-swd.md 4.1), enforced by compx_hex_tool.py audit; compx_usb_flasher.py flash also refuses images ending above 0x4D800 (VerifyByAddress answers 0xA2 from there, verified 2026-11-13)
+    source: the bootloader stores each Program write at address + 0x47800 and copies it to 0x6000 at Exit (its code, read from a unit 2026-11-19, bootloader-protocol.md 3), so image bytes from 0x36800 up land on the 0x7E000 page; compx_hex_tool.py audit and compx_usb_flasher.py flash refuse them
   - start: "0x0007E000"
     end: "0x0007FFFF"
     name: custom-firmware settings (open-directional-dpi saves its profile at 0x7E000; not used by stock)
     evidence: verified
-    source: a profile saved there by the open-directional-dpi patch read back unchanged after two full flashes with compx_usb_flasher.py, so Erase does not reach it (retail unit, 2026-11-13)
+    source: a profile saved there by the open-directional-dpi patch read back unchanged after two full flashes (2026-11-13); read directly on 2026-11-19 (28 bytes); Erase changes no flash (bootloader code)
   - start: "0x00088000"
     end: "0x00088FFF"
-    name: system config / 2.4 GHz pairing page (32 B + CRC-16)
+    name: blank on the unit read (earlier docs called it a 2.4 GHz pairing page)
     preserve: true
-    evidence: inferred
-    source: CM2856_Mouse_USB_v1.00.00_20220810.hex @ 0x00014700-0x00014770 (disassembly); not readable over USB (VerifyByAddress refuses 0x0004D800 and up); the mouse still linked to its receiver after at least five Erase runs on 2026-11-13, so Erase probably leaves it (inferred)
+    evidence: verified
+    source: read from a retail unit on 2026-11-19 through a debug build of the patch, and the page is blank, so the unit stores no pairing data here; the radio link uses FICR DEVICEID[0] (radio-protocol.md 3.1) and the application never references 0x88000
   - start: "0x0008B000"
     end: "0x0008CFFF"
-    name: active profile (0x8B) and extended config (0x8C) pages
+    name: stock profile config (0x8B, all three profiles) and macro directory (0x8C)
     preserve: true
-    evidence: inferred
-    source: CM2856_Mouse_USB_v1.00.00_20220810.hex @ 0x00014668-0x00014700 (disassembly)
+    evidence: verified
+    source: read from a retail unit on 2026-11-19 (0x8B000 578 bytes and 0x8C000 1,018 bytes non-blank); writers CM2856_Mouse_USB_v1.00.00_20220810.hex @ 0x00014668-0x00014750 (disassembly); layouts in firmware-subsystems.md 3.5 and hardware.md 4.1
   - start: "0x00090000"
     end: "0x000DFFFF"
     name: per-button macro and profile pages
@@ -136,10 +138,10 @@ flash_layout:
     source: CM2856_Receiver_USB_v1.00.00_20220810.hex @ 0x000097BC (loads 0x24 bytes from 0x38000) and @ 0x0000C6FC (erases the page and writes them back), disassembly; see receiver.md
 
 bootloader:
-  protocol: Compx USB HID ISP, 64-byte Feature reports on interface 2 (usage page 0xFFFF), payload XOR 0x55 on the wire; see platforms/compx-nrf52/bootloader-protocol.md
+  protocol: Compx USB HID ISP, 64-byte Feature reports (usage page 0xFFFF, usage 0x00) on the bootloader's only interface, 0 (the application has the same collection on interface 2), payload XOR 0x55 on the wire; see platforms/compx-nrf52/bootloader-protocol.md
   entry: Feature report feat[2]=0x00 (deviceID), feat[3]=0x01, feat[6]=0xB0, rest 0 ("set device mode" to 0xB0); the application then writes 0xA55AA55A to SRAM 0x2003FFFC and resets
   evidence: verified
-  source: packet read from FirmwareUpdate.exe 1.0.8229.18185 IL (C52840Dongle::SetBLDeviceMode) and tested on a retail mouse, 2026-11-13; the magic-word path is CM2856_Mouse_USB_v1.00.00_20220810.hex @ 0x000151AC (group body[4] = 0) -> 0x00014788 (command body[5] = 0x00) -> 0x00014824 (mode compare) -> 0x0001484C (store) -> 0x000071B8 (reset), disassembly and Unicorn emulation (inferred); Erase clears 0x1E000 and up but keeps 0x6000-0x1DFFF, and Program is read-modify-write (both verified 2026-11-13); Erase does not reach 0x7E000 (a profile saved there survived two full flashes, verified 2026-11-13); whether it reaches 0x88000+ is unknown
+  source: packet read from FirmwareUpdate.exe 1.0.8229.18185 IL (C52840Dongle::SetBLDeviceMode) and tested on a retail mouse, 2026-11-13; the magic-word path is CM2856_Mouse_USB_v1.00.00_20220810.hex @ 0x000151AC (group body[4] = 0) -> 0x00014788 (command body[5] = 0x00) -> 0x00014824 (mode compare) -> 0x0001484C (store) -> 0x000071B8 (reset), disassembly and Unicorn emulation (inferred); the bootloader's own code was read from a unit on 2026-11-19 (bootloader-protocol.md 3); Erase changes no flash, Program and VerifyByAddress act on address + 0x47800 through a read-modify-write page buffer, and Exit copies that second copy to 0x6000
 
 recovery:
   - method: re-flash the official .hex through the resident bootloader (official updater or compx_usb_flasher.py flash)
@@ -148,12 +150,15 @@ recovery:
   - method: boot chord of the open-directional-dpi patch (hold Left + Right + DPI while the MCU comes out of reset, with the battery disconnected or the mouse fully powered down, then connect USB; stock firmware has no chord)
     evidence: verified
     source: open-directional-dpi 21ea252 (stock_ddpi_patch.c) on a retail unit, 2026-11-13; with the chord held while the mouse powered up on the cable it enumerated as 258a:2103 "Glorious bootloader", so P1.15, P1.13 and P1.00 read low with the three buttons held (which pin is which button stays inferred, hardware.md 3.2); compx_usb_flasher.py dump --out <new file> --end 0x6020 (32-byte read, then Exit) returned it to 258a:2018 without writing anything
+  - method: the bootloader's own chord (hold Back + Forward + DPI while the MCU powers up; with the switch off and the cable unplugged, hold the three and plug the cable in)
+    evidence: verified
+    source: bootloader code 0x24E8 (P0.09, P0.10 and P1.00 sampled after about 640 ms), read from a retail unit and tested on it 2026-11-19 (258a:2103 enumerated); it works whatever the application is
   - method: boot chord of the zmk-board image (same chord, separate code in bootloader_reentry.c)
     evidence: unknown
     source: implemented (zmk-board bootloader_reentry.c) but untested on hardware, the ZMK board was never flashed; settled by flashing it, holding the chord while it resets and checking that 258a:2103 enumerates
-  - method: SWD on unlabelled test pads near U1 (pad order and APPROTECT state not checked)
-    evidence: unknown
-    source: needs a passive continuity check and a read-only CTRL-AP APPROTECTSTATUS read (flash-layout-and-swd.md section 5)
+  - method: SWD on unlabelled test pads near U1
+    evidence: verified
+    source: not possible for reading, since UICR.APPROTECT reads 0xFFFFFF00 (enabled) on a retail unit (2026-11-19); unlocking erases the whole chip, bootloader included
 
 related_firmware:
   - name: open-directional-dpi

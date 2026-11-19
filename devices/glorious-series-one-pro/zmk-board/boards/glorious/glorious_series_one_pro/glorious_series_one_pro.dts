@@ -64,7 +64,11 @@
         triggers-per-rotation = <24>;
     };
 
-    /* Peripheral Power Rail Enables (Inferred from 0x0000C61A & 0x0000C636; polarity unconfirmed) */
+    /*
+     * Two outputs the stock firmware sets once at init and never touches again (roles unknown,
+     * firmware-subsystems.md 2.1): P0.26 high (0x0000C61A), P0.14 low (0x0000C636). Both are kept
+     * at the stock level: sensor_pwr is on at boot, led_pwr is left off (driven low).
+     */
     sensor_pwr: regulator-sensor-pwr {
         compatible = "regulator-fixed";
         regulator-name = "sensor-pwr-en";
@@ -76,7 +80,6 @@
         compatible = "regulator-fixed";
         regulator-name = "led-pwr-en";
         enable-gpios = <&gpio0 14 GPIO_ACTIVE_HIGH>;
-        regulator-boot-on;
     };
 
     /* Enable together with paw3370_bamf once a driver exists */
@@ -160,10 +163,12 @@
 /*
  * Flash Partition Layout (Preserves Compx Bootloader AND Stock Calibration/Pairing!)
  *   0x00000000..0x00005FFF (24 KB):  Compx Resident USB HID Bootloader (258a:2103)
- *   0x00006000..0x0004D7FF (286 KB): Custom Application Firmware Partition. It ends where the
- *                                    bootloader stops answering reads (0xA2 from 0x4D800, Verified
- *                                    2026-11-13), so compx_usb_flasher.py can verify it by read-back.
- *   0x0004D800..0x0007DFFF:          unused
+ *   0x00006000..0x000367FF (194 KB): Custom Application Firmware Partition. The bootloader stores
+ *                                    an image at +0x47800 before Exit copies it into place (bootloader
+ *                                    code, read 2026-11-19), so image bytes from 0x36800 up would land
+ *                                    on the settings page 0x7E000 below; compx_usb_flasher.py refuses them.
+ *   0x00036800..0x0004D7FF:          unused (the bootloader may copy settings pages here; harmless)
+ *   0x0004D800..0x00094FFF:          the bootloader's second copy of the application
  *   0x0007E000..0x0007FFFF (8 KB):   Dedicated ZMK NVS Settings Storage
  *   0x00088000..0x000DFFFF:          UNTOUCHED Stock RF Pairing & Profile Flash
  */
@@ -181,7 +186,7 @@
 
         code_partition: partition@6000 {
             label = "image-0";
-            reg = <0x00006000 0x00047800>;
+            reg = <0x00006000 0x00030800>;
         };
 
         storage_partition: partition@7e000 {

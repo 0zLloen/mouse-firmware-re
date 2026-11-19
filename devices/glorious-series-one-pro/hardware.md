@@ -16,7 +16,7 @@ Findings use the labels defined in the repository `README.md`: **Verified** (obs
 | :--- | :--- | :--- | :--- | :--- |
 | **Wired Mouse (Application)** | `258a:2018` | `0x0101` (`1.01`) | `Series One PRO Wireless` | **Verified** (sysfs `product` and `lsusb` on a retail mouse, wired, 2026-11-12; the same string as the receiver) |
 | **Wireless 2.4 GHz Receiver (Application)** | `258a:2031` | `0x0100` (`1.00`) | `Series One PRO Wireless` | **Verified** (Live Linux `lsusb` Bus 001 Dev 036 + `receiver_fw.bin` @ `0x0000D0DC`) |
-| **Wired Mouse (Bootloader)** | `258a:2103` | Unknown (not recorded) | `Glorious bootloader` (manufacturer `Glorious`) | **Verified** (`lsusb` after `compx_usb_flasher.py dump` sent the updater's SetBLDeviceMode packet, retail mouse, 2026-11-13) |
+| **Wired Mouse (Bootloader)** | `258a:2103` | `0x0200` (`2.00`) | `Glorious bootloader` (manufacturer `Glorious`), no serial string, one interface | **Verified** (`lsusb -v`, 2026-11-18; `lsusb` after `compx_usb_flasher.py dump` sent the updater's SetBLDeviceMode packet, retail mouse, 2026-11-13) |
 | **Wireless Receiver (Bootloader)** | `258a:2113` | Unknown | Unknown | **Inferred** (PID constant in `FirmwareUpdate.exe` CIL `Form1::InitDevice`; not yet seen on USB) |
 
 - **USB Vendor ID `0x258a`**: Sino Wealth / Compx Technology OEM ID used across Glorious Classic (`glorious-classic`) mice.
@@ -45,8 +45,8 @@ Passive inspection of `/sys/class/hidraw/hidraw4..6/device/report_descriptor` on
      - `0x01`: Consumer Control (16-bit usage `0x0000..0x023C`)
      - `0x02`: System Control (Power/Sleep/Wake)
      - `0x03`: Standard 8-byte modifier + 6KRO Keyboard report (for macro/keybind playback)
-     - `0x04`: Vendor Usage Page `0xFFA0` (8-byte Input report)
-     - `0x05`: Vendor Usage Page `0xFFFF` (8-byte Input report for asynchronous battery/DPI notifications)
+     - `0x04`: Vendor Usage Page `0xFFA0` (8-byte Input report). **Inferred**: the DPI, profile and host-button notifications go out with this ID ([`firmware-subsystems.md`](firmware-subsystems.md) 3.3); there is no battery notification
+     - `0x05`: Vendor Usage Page `0xFFFF` (8-byte Input report). No sender was found; an earlier version of this page gave it the notifications
 
 3. **Interface 2 (`input2` / `hidraw6`) — Vendor Configuration Feature Channel (20 bytes)**
    - **Raw Descriptor**:
@@ -93,6 +93,7 @@ Addresses are in `CM2856_Mouse_USB_v1.00.00_20220810.hex` and **Inferred** from 
 - When ACKs stop, the mouse retries every 1 ms and hops channels. After 32 hop rounds (about 256 ms) it drops the link (`0x000188C4`–`0x000188D0`) and searches with 5-byte connect requests on 3 pairing channels (states 4–6) until the receiver answers.
 - Sleep is System OFF, not a radio idle mode. A 1 s app timer (handler `0x0000AB44`) counts seconds without a report in `0x20003048` while the config u16 at `0x200038CB` is not `0xFFFF` (factory value 420 s; `0xFFFF` = never). Any report while linked zeroes the count (`0x00014D0C`). The mouse powers off when the count passes that value, at 0 % battery (`0x0000E30E`), or 1–2 s after a type-4 "sleep" downlink record (`0x000133A4`), which the receiver sends when the host suspends it ([`receiver.md`](receiver.md) section 3).
 - The sleep path `0x0000AB98` / `0x0000ABC4` stops the radio, `TIMER0` and `TIMER1`, arms GPIO sense on the six buttons, the motion pin and both wheel pins (`0x0000ABF6`–`0x0000AC68`), then enters System OFF. Only a button, the wheel or sensor motion wakes it, and waking is a reset, a reboot and a reconnect. A host request cannot wake it: the receiver can only talk to the mouse in ACKs to the mouse's own packets.
+- Two corrections from the battery code ([`firmware-subsystems.md`](firmware-subsystems.md) 1.8, **Inferred**, 2026-11-19): the idle timeout and the 0 % power-off apply only while USB is not configured, and after a 0 % power-off the wake pins are **not** armed (`0x0000ABF4`), so buttons, wheel and motion cannot wake the mouse. `0x0000E30E` only sets the battery-empty flag; the 1 s handler powers off.
 
 ---
 
@@ -132,11 +133,13 @@ By disassembling the GPIO initialization routine (`0x0000C5B8`–`0x0000C648`), 
 | **Button 5 (DPI Cycle Button)** | **`P1.00`** | `32` (`0x20`) | Input, Pull-Up, Active Low | `0x0C5F0`, `0x09648`, `0x16B6C`, `0x0AC2E` | **Verified** in the boot chord (2026-11-13); which button: **Inferred** |
 | **Scroll Wheel Encoder A** | **`P0.29`** | `29` (`0x1D`) | Input, Pull-Up | `0x0C600`, `0x0AC54`, `0x16CB2` | **Inferred** |
 | **Scroll Wheel Encoder B** | **`P0.02`** | `2` (`0x02`) | Input, Pull-Up | `0x0C5F8`, `0x0AC3E`, `0x16CBA` | **Inferred** |
-| **Charger / Power Status 1** | **`P1.06`** | `38` (`0x26`) | Input, Pull-Up | `0x0C614`, `0x0E1C4` (`Source\battery.c`) | **Inferred** |
-| **Power / Mode Switch Input** | **`P1.04`** | `36` (`0x24`) | Input, Pull-Up | `0x0C60A` | **Inferred** |
-| **Peripheral / Sensor Power En 1** | **`P0.26`** | `26` (`0x1A`) | Output | `0x0C61A` | **Inferred** |
-| **Peripheral / LED Power En 2** | **`P0.14`** | `14` (`0x0E`) | Output | `0x0C636` | **Inferred** |
-| **LED / Matrix Outputs** | **`P0.13`, `P0.15`, `P0.17`, `P0.20`, `P0.22`, `P0.24`** | `13, 15, 17, 20, 22, 24` | Output (PWM / GPIO indicator & RGB LEDs) | `0x18FA6`–`0x18FE8`, `0x16B8C`–`0x16BC6` | **Inferred** |
+| **Charging input** (low = charging; the only one) | **`P1.06`** | `38` (`0x26`) | Input, Pull-Up | `0x0C614`, `0x0E1C4`, `0x0E1DC` (`Source\battery.c`; [`firmware-subsystems.md`](firmware-subsystems.md) 1.5) | **Inferred** |
+| **Battery voltage, SAADC `AIN7`** | **`P0.31`** | `31` (`0x1F`) | Analog input | `0x0E09C` ([`firmware-subsystems.md`](firmware-subsystems.md) 1.2) | **Inferred** |
+| **Unknown input** (configured, never read in this build; earlier called a power / mode switch) | **`P1.04`** | `36` (`0x24`) | Input, Pull-Up | `0x0C60A` ([`firmware-subsystems.md`](firmware-subsystems.md) 1.6) | **Inferred** |
+| **Unknown output, driven high once at init** (earlier called a sensor power enable) | **`P0.26`** | `26` (`0x1A`) | Output | `0x0C61A`–`0x0C632` | **Inferred** |
+| **Unknown output, driven low once at init** (earlier called an LED power enable; no LED code touches it) | **`P0.14`** | `14` (`0x0E`) | Output | `0x0C636`–`0x0C64A` ([`firmware-subsystems.md`](firmware-subsystems.md) 2.1) | **Inferred** |
+| **LED 0 (status), `PWM0` ch 0 / 1 / 2** | **`P0.13`, `P0.15`, `P0.17`** | `13, 15, 17` | PWM output, looks active-high | config table `0x1A6D4`, init `0x0D91C` ([`firmware-subsystems.md`](firmware-subsystems.md) 2.1) | **Inferred** (pins **Verified** as table values) |
+| **LED 1 (DPI colour), `PWM1` ch 0 / 1 / 2** | **`P0.20`, `P0.22`, `P0.24`** | `20, 22, 24` | PWM output, looks active-high | config table `0x1A6E0` | **Inferred** (pins **Verified** as table values) |
 
 > **Important Note on `P0.09` and `P0.10` (NFC Pins)**:
 > Because Side Buttons 4 and 5 are routed to `P0.09` (`NFC1`) and `P0.10` (`NFC2`), any Zephyr or ZMK board definition **must** set `&uicr { nfct-pins-as-gpios; };` so `NRF_UICR->NFCPINS` is configured for GPIO operation. `CONFIG_NFCT_PINS_AS_GPIOS` is deprecated in Zephyr 4.1 (ZMK main).
@@ -227,7 +230,7 @@ From two independent disassembly passes over `CM2856_Mouse_USB_v1.00.00_20220810
 - Host group 0 (`body[4] = 0`): `0x05` with `body[6] = n` (1-based) sets the active index to `n - 1`. It clamps to 2 without checking the count, and `n = 0` writes `0xFF` (a stock bug). `0x85` returns the active profile + 1 in `body[6]`; `0x86` returns the count and `0x06` sets it (1..3). `0x85` (`a1 00 02 01 00 85 01`, active profile 1) and `0x86` (`a1 00 02 01 00 86 03`, count 3) are **Verified** on a retail mouse over the `258a:2031` receiver (2026-11-17); `0x05` and `0x06` were run in emulation only.
 - No default switch: in the factory map no button has action type 8, in any profile or layer. No button combination switches profiles either: all 63 combinations of the six buttons through `0x14244` left the active index unchanged. The combinations L+R+M, L+M+DPI, R+M+DPI, M+Back+DPI and M+Forward+DPI change LED settings (disassembly only).
 - L+R+M held for 5 s (5,000 `TIMER1` ticks) restores the factory config, so the active profile becomes profile 1, and flags a save and reset. Releasing any of the three cancels it (`0x2000305E`).
-- A switch calls `0x00018754` (only from `0xAA44` and `0x1491C`). It sets `0x20003068` / `0x2000306A` from `P+0x2B` / `P+0x2D`, programs the sensor once through `0x17860`, copies the stage table to `0x20004CE4` and the button map to `0x20004B30`, reloads the LED effect from `P+0x11` (`0xDA58`; factory effects 1 / 2 / 5) and clears macro and key state (`0x16A1C`, `0x18638`). The button action (type 8, `0xAA48`–`0xAA5A`) also queues a notification (type 2, value profile + 1, ring `0x20004BA8`; probably input report ID 5); host command `0x05` does not. The LED, macro and notification parts are from disassembly only.
+- A switch calls `0x00018754` (only from `0xAA44` and `0x1491C`). It sets `0x20003068` / `0x2000306A` from `P+0x2B` / `P+0x2D`, programs the sensor once through `0x17860`, copies the stage table to `0x20004CE4` and the button map to `0x20004B30`, reloads the LED effect from `P+0x11` (`0xDA58`; factory effects 1 / 2 / 5) and clears macro and key state (`0x16A1C`, `0x18638`). The button action (type 8, `0xAA48`–`0xAA5A`) also queues a notification (type 2, value profile + 1, ring `0x20004BB8`; USB input report ID 4, radio record type 5, [`firmware-subsystems.md`](firmware-subsystems.md) 3.3); host command `0x05` does not. The LED, macro and notification parts are from disassembly only.
 - The save is deferred: `0x166EC(8)` sets `0x20003001 |= 1` and `0x20003004 = 300`, the `TIMER1` handler counts that down, and then `0x14668` (main loop `0xE8D2`) erases and writes page `0x8B000`, but only while `0x20003048 >= 2` (at least 2 s without a report, section 2.3) or byte `0x20003000` is non-zero (`0x14670`–`0x1467A`). With sleep set to `0xFFFF` the counter does not run (`0xAB4E`), so this gate then depends on `0x20003000` (Inferred). The DPI button uses the same path (`0x166EC(2)`). So with the factory sleep value the active profile should survive a power cycle.
 - Group 3 command `0x80` (section 4.1) is a read-only query of one button's action: `body[6]` profile (1-based), `body[7]` button code, `body[8]` layer; the reply has `f0..` from `body[9]`. A reply with `body[9] = 0x08` means that button switches profiles. **Verified** on a retail unit over `258a:2031` (2026-11-17): all 48 slots (profiles 1..3, layers 0..1, codes `0x01`..`0x05`, `0x14`, `0x10`, `0x11`) returned the factory map (`01 01 01..05`, `07 01 06` for `0x14`, `01 01 10..11` for the wheel) with no `0x08` action.
 

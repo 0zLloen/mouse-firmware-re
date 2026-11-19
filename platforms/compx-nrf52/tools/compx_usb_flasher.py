@@ -12,21 +12,24 @@ Implements the C52840Dongle USB HID Feature-report ISP protocol from FirmwareUpd
              mismatch or error the mouse stays in the bootloader and the exit code is 1.
   flash      program an Intel HEX image whose lowest address is 0x6000:
                1. offline checks: the safety audit (compx_hex_tool.audit_binary_safety), and the
-                  image must end at or below 0x4D800, the top VerifyByAddress can read back
+                  image must end at or below 0x36800 (PROGRAM_TOP, below)
                2. refuse unless GetBLFW is b0 01 00 00, the only bootloader tested
-               3. Erase, then write 0xFF to 0x6000 and confirm it reads back erased
-               4. program and verify everything except the first 32-byte block
-               5. program and verify the vector-table block at 0x6000 last
-               6. Exit
-             Erase keeps 0x6000..0x1DFFF. An interruption between Erase and the 0xFF write
-             leaves the old vector table: the old image stays bootable only if it ended below
-             0x1E000 (stock, the open-directional-dpi patch); a larger one would boot with its
-             tail erased. After the 0xFF write, 0x6000 reads 0xFF until step 5, and whether the
-             bootloader then stays resident is unknown (its code has never been read). flash
-             does not compare against a reference image before erasing.
-  dump       read-only backup: enter the bootloader and save flash from 0x6000 up to where
-             VerifyByAddress is refused (0x4D800 on a retail Series One Pro, so the pairing and
-             calibration pages at 0x88000+ are NOT covered) to an Intel HEX file; run it first.
+               3. Erase (it changes no flash on this bootloader), program and verify everything
+                  except the first 32-byte block, then the vector-table block at 0x6000
+               4. Exit
+  dump       backup: enter the bootloader and save what VerifyByAddress returns for 0x6000 up to
+             where it is refused (0x4D800) to an Intel HEX file; run it before flash.
+
+How the Series One Pro bootloader works (its code was read from a unit on 2026-11-19,
+platforms/compx-nrf52/bootloader-protocol.md section 3): Program and VerifyByAddress act on the
+address + 0x47800 (BANK_OFFSET), a second copy of the application at 0x4D800..0x94FFF. The running
+application at 0x6000 is only replaced at Exit, which copies the second copy over it and then resets.
+So an interrupted flash leaves the old application untouched, and an interrupted Exit is finished by the
+bootloader at the next power-up. But the second copy overlaps the settings pages: an image byte at
+0x6000 + n is stored at 0x4D800 + n, so an image reaching 0x36800 would overwrite the 0x7E000 page,
+0x43800 the stock profile page 0x8B000, 0x44800 the macro directory 0x8C000. Hence PROGRAM_TOP. dump
+reads the second copy; Exit after it copies the whole bank (every page was read), which rewrites the
+application with identical bytes. The vector-table-last order is kept but no longer needed.
 
 The app -> bootloader entry packet is the official updater's (see enter_bootloader_from_app) and
 was tested on a retail unit. If the mouse does not re-enumerate as 258a:2103, use the official
@@ -68,6 +71,8 @@ PID_MOUSE_BL = 0x2103
 APP_BASE_ADDR = compx_hex_tool.MOUSE_APP_BASE
 FLASH_END = 0x00100000  # nRF52840: 1 MiB
 READ_TOP = 0x0004D800  # VerifyByAddress answers 0xA2 from here up (retail Series One Pro, 2026-11-13)
+BANK_OFFSET = 0x47800  # Program / VerifyByAddress address + this = flash written / read (bootloader code, 2026-11-19)
+PROGRAM_TOP = 0x7E000 - BANK_OFFSET  # 0x36800: higher image bytes would land on the 0x7E000 settings page
 TESTED_BL_VERSION = bytes.fromhex("b0010000")  # GetBLFW of the only bootloader flashed so far (2026-11-13)
 BLOCK = 32
 XOR_WIRE_KEY = 0x55  # USB wire only; .hex files are plain
@@ -148,7 +153,7 @@ class HidapiTransport:
         The collection with Usage Page 0xFFFF, Usage 0x00: the app's Feature interface 2 (hardware.md 2.2).
         Interface 1 also has a 0xFFFF collection, with Usage 0x01 and input reports only. hidapi lists every
         top-level collection; on Windows each has its own path. Raises if more than one device matches.
-        The bootloader (258a:2103) is assumed to use the same pair: its report descriptor is not recorded yet.
+        The bootloader (258a:2103) has the same pair on its only interface (sysfs report descriptor, 2026-11-18).
         """
         found = self.hid.enumerate(vid, pid)
         paths = sorted({d["path"] for d in found if (d["usage_page"], d["usage"]) == (0xFFFF, 0x00)})
@@ -319,9 +324,9 @@ def bl_read_32(bl: CompxHidDevice, address: int, length: int = BLOCK) -> bytes:
 
 def bl_erase_app(bl: CompxHidDevice) -> None:
     """
-    C52840Dongle::Erase (cmd 0x01), sent once, exactly as the updater does. On a retail Series One Pro
-    (2026-11-13) it cleared 0x1E000..0x4D7FF (the readable top), not 0x7E000, and left 0x6000..0x1DFFF, the old
-    image, in place: it does not blank the vector table, see invalidate_vector_table().
+    C52840Dongle::Erase (cmd 0x01), sent once, exactly as the updater does. On the Series One Pro bootloader it
+    only drops the pending page buffer and changes no flash (bootloader code, 2026-11-19): Program is a
+    read-modify-write of whole 4 KB pages, so no erase is needed.
     """
     sent_error = None
     try:
@@ -331,17 +336,6 @@ def bl_erase_app(bl: CompxHidDevice) -> None:
     resp = bl.poll_status(0.050, 40)
     if resp[0] not in STATUS_OK:
         raise RuntimeError(f"Erase failed or timed out (SET error: {sent_error}): last resp={resp[:16].hex()}")
-
-
-def invalidate_vector_table(bl: CompxHidDevice) -> None:
-    """
-    Make 0x6000 read 0xFF before anything else is written, so an interruption from here on leaves
-    no valid vector table. Program is read-modify-write on this bootloader (verified on a retail unit:
-    a 32-byte write lands exactly and the rest of the page is kept), so writing 0xFF blanks the block.
-    """
-    bl_program_32(bl, APP_BASE_ADDR, b"\xFF" * BLOCK)
-    if bl_read_32(bl, APP_BASE_ADDR) != b"\xFF" * BLOCK:
-        raise RuntimeError("0x00006000 does not read back as 0xFF; nothing else was written")
 
 
 def bl_program_32(bl: CompxHidDevice, address: int, chunk: bytes) -> None:
@@ -405,7 +399,7 @@ def enter_bootloader():
         return wait_for_device(VID_SINOWEALTH, PID_MOUSE_BL, timeout_s=10.0)
     except TimeoutError:
         listed = transport.hid.enumerate(VID_SINOWEALTH, PID_MOUSE_BL) if isinstance(transport, HidapiTransport) else []
-        if listed:  # it did re-enumerate; find() wants the app's usage pair, not yet recorded for the bootloader
+        if listed:  # it did re-enumerate; find() wants usage 0xFFFF/0x00, which this bootloader did not list
             usages = ", ".join(sorted({f"0x{d['usage_page']:04X}/0x{d['usage']:02X}" for d in listed}))
             raise RuntimeError(
                 "The mouse is in its bootloader (258a:2103), but hidapi lists no collection with Usage Page 0xFFFF, "
@@ -484,9 +478,9 @@ def cmd_flash(args) -> int:
         failed = [k for k, v in audit["checks"].items() if not v]
         raise RuntimeError(f"Refusing to flash: safety audit failed: {failed}")
     end = APP_BASE_ADDR + len(image)
-    if end > READ_TOP:
-        raise RuntimeError(f"Refusing to flash: image ends at 0x{end:08X}, above 0x{READ_TOP:08X}; "
-                           "it cannot be read back over USB")
+    if end > PROGRAM_TOP:
+        raise RuntimeError(f"Refusing to flash: image ends at 0x{end:08X}, above 0x{PROGRAM_TOP:08X}; the "
+                           "bootloader stores it at +0x47800, where it would overwrite the settings pages")
     print(f"[AUDIT] {Path(args.firmware_hex).name}: {len(image)} bytes, SHA256={audit['sha256'][:16]}..., all checks passed")
 
     bl_node = enter_bootloader()
@@ -501,9 +495,8 @@ def cmd_flash(args) -> int:
                                "updater, or `compx_usb_flasher.py dump --out exit.hex --end 0x6020` (reads 32 "
                                "bytes, then sends Exit)")
 
-        print("[1/4] Erase (extent defined by the bootloader), then blank the vector table...")
+        print("[1/4] Erase (on this bootloader: drops its page buffer, writes nothing)...")
         bl_erase_app(bl)
-        invalidate_vector_table(bl)
 
         print(f"[2/4] Programming 0x{APP_BASE_ADDR + BLOCK:08X}..0x{APP_BASE_ADDR + len(image) - 1:08X}...")
         for offset in range(BLOCK, len(image), BLOCK):
@@ -574,7 +567,7 @@ def main() -> int:
     p = sub.add_parser("verify-bl", help="Enter bootloader, read back and compare the full reference image")
     p.add_argument("--reference-hex", required=True, help="Reference Intel HEX (lowest address 0x6000)")
     p.add_argument("--stay-in-bl", action="store_true", help="Do not send Exit even on a full match")
-    p = sub.add_parser("flash", help="Program and verify an Intel HEX image (0x6000 up to at most 0x4D800)")
+    p = sub.add_parser("flash", help="Program and verify an Intel HEX image (0x6000 up to at most 0x36800)")
     p.add_argument("--firmware-hex", required=True, help="Intel HEX to flash, e.g. the vendor .hex for rollback")
     p = sub.add_parser("dump", help="Read-only backup of flash (default 0x6000..0xFFFFF) to an Intel HEX file")
     p.add_argument("--out", required=True, help="Output .hex (never overwritten)")
