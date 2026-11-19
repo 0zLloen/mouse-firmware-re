@@ -32,7 +32,7 @@ mouse-firmware-re/
         ├── firmware-subsystems.md         # Stock firmware internals: battery and power, LEDs, button actions, macros (disassembly + emulation)
         ├── receiver.md                    # 2.4 GHz receiver 258a:2031: relaying, its own commands (two dangerous), config page
         ├── firmware-updater.md            # Analysis of official Glorious updater archives, SHA-256 hashes, and XVI.zip
-        ├── flash-layout-and-swd.md        # 1 MB flash layout, pairing page (0x00088000), and passive SWD check procedure
+        ├── flash-layout-and-swd.md        # 1 MB flash layout, what the unit's flash holds, APPROTECT (locked), SWD notes
         ├── flashing-feasibility.md        # Comparison of ZMK replacement vs. surgical stock firmware binary patching
         ├── re-scripts/                    # RE scripts behind the receiver and RF findings (capstone/Unicorn, hardware
         │                                  #   probes; CI only compiles them)
@@ -64,8 +64,8 @@ Reverse-engineered a mouse, or want to? [`CONTRIBUTING.md`](CONTRIBUTING.md) wal
      - **Inferred**: your interpretation of disassembly, decompilation, USB captures or photos: what a pin does, what a command means, how a bootloader behaves.
      - **Unknown**: not established yet; say what would settle it.
 3. **Bootloader & Calibration Preservation**:
-   - Tools in this repository never execute mass-erase (`APPROTECT` recovery / `ERASEALL`). `Program` writes are limited to `0x00006000`–`0x0004D7FF` on the mouse (the top `VerifyByAddress` can read back; `compx_usb_flasher.py` refuses larger images), so they never touch the resident 24 KB USB HID bootloader (`0x00000000`–`0x00005FFF`) or the factory 2.4 GHz pairing page (`0x00088000`).
-   - The flasher has to send the bootloader's parameterless `Erase`. On the Series One Pro it clears `0x1E000` up to at least `0x4D7FF` and does **not** clear the `0x7E000` settings page (both verified); whether it reaches the `0x88000`+ pairing/profile pages is **Unknown**.
+   - Tools in this repository never execute mass-erase (`APPROTECT` recovery / `ERASEALL`). On the Series One Pro the bootloader stores every `Program` write at address + `0x47800` and copies it into place at `Exit`, so that second copy overlaps the settings pages; `compx_usb_flasher.py` and `compx_hex_tool.py` therefore refuse images ending above `0x36800`, which keeps `0x7E000`, `0x8B000` and `0x8C000` untouched. The resident 24 KB bootloader (`0x00000000`–`0x00005FFF`) is never written ([`bootloader-protocol.md`](platforms/compx-nrf52/bootloader-protocol.md) section 3).
+   - The bootloader's `Erase` changes no flash, and an interrupted flash leaves the running application untouched: the bootloader replaces it only at `Exit` and finishes an interrupted copy at the next power-up (read from the bootloader's code, 2026-11-19).
 
 ---
 
@@ -77,13 +77,13 @@ python3 test_tools.py                                   # offline checks, no har
 python3 compx_hex_tool.py audit  CM2856_Mouse_USB_v1.00.00_20220810.hex
 python3 compx_hex_tool.py decode CM2856_Mouse_USB_v1.00.00_20220810.hex -o CM2856_Mouse_USB_v1.00.00_20220810.bin
 python3 compx_usb_flasher.py probe
-python3 compx_usb_flasher.py dump --out backup.hex          # read-only backup of 0x6000-0x4D7FF; keep it private
+python3 compx_usb_flasher.py dump --out backup.hex          # backup of the bootloader's copy of the application; keep it private
 python3 compx_usb_flasher.py verify-bl --reference-hex CM2856_Mouse_USB_v1.00.00_20220810.hex
 python3 compx_usb_flasher.py flash --firmware-hex CM2856_Mouse_USB_v1.00.00_20220810.hex   # stock rollback
 ```
 
-Run `dump` before any `flash`: the vendor package is no longer downloadable, so a firmware version you have not archived is lost once it is overwritten. The backup covers `0x6000`–`0x4D7FF` only; the settings, pairing and profile pages above it are not readable over USB.
+Run `dump` before any `flash`: the vendor package is no longer downloadable, so a firmware version you have not archived is lost once it is overwritten. The backup is what `VerifyByAddress` returns for `0x6000`–`0x4D7FF`: the bootloader's second copy at `0x4D800`–`0x94FFF`, which equals the running application after a completed flash and, at fixed offsets, also holds the `0x7E000`, `0x8B000` and `0x8C000` settings pages. The bootloader itself is not readable over USB.
 
-The vendor `.hex` files are plain Intel HEX; the `0x55` XOR exists only on the USB wire. `flash` refuses any `.hex` whose lowest address is not `0x6000` or that ends above `0x4D800`, and any bootloader whose `GetBLFW` is not `b0 01 00 00` (the only one tested), before it erases anything. It programs the vector-table block at `0x6000` last, and sends `Exit` only after every byte reads back correctly. Install `devices/glorious-series-one-pro/udev/70-glorious-series-one-pro.rules` for non-root hidraw access. Windows and macOS (untested): `pip install hidapi`, nothing there has been run on hardware; see [CONTRIBUTING.md](CONTRIBUTING.md#6-read-back-and-backup).
+The vendor `.hex` files are plain Intel HEX; the `0x55` XOR exists only on the USB wire. `flash` refuses any `.hex` whose lowest address is not `0x6000` or that ends above `0x36800`, and any bootloader whose `GetBLFW` is not `b0 01 00 00` (the only one tested), before it erases anything. It programs the vector-table block at `0x6000` last, and sends `Exit` only after every byte reads back correctly. Install `devices/glorious-series-one-pro/udev/70-glorious-series-one-pro.rules` for non-root hidraw access. Windows and macOS (untested): `pip install hidapi`, nothing there has been run on hardware; see [CONTRIBUTING.md](CONTRIBUTING.md#6-read-back-and-backup).
 
 Firmware for this mouse: [open-directional-dpi](https://github.com/0zLloen/open-directional-dpi) patches the stock image (per-direction sensitivity). It was flashed with `compx_usb_flasher.py` and verified on a retail unit, over the cable and through the 2.4 GHz receiver (2026-11-13). The draft ZMK board in `zmk-board/` builds but has no sensor driver yet.

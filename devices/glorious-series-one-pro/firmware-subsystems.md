@@ -3,11 +3,27 @@
 Three parts of the stock mouse application that [`hardware.md`](hardware.md) only located: battery and power, the LEDs, and the button-action and macro system.
 
 - Addresses are load addresses in `CM2856_Mouse_USB_v1.00.00_20220810.hex` (SHA-256 in [`device.yaml`](device.yaml)).
-- Everything is **Inferred** from disassembly and Unicorn emulation (2026-11-19) unless marked. **Verified** here means read literally from the image (a constant, a table value, a string) unless hardware is named. **Nothing in this file was tested on a mouse**, except the battery query reply.
+- Everything is **Inferred** from disassembly and Unicorn emulation (2026-11-19) unless marked. **Verified** here means read literally from the image (a constant, a table value, a string) unless hardware is named. The checks made on a retail mouse are in section 0.
 - "Emulated" means the stock function was run in Unicorn, with RAM initialised by the image's own scatter loader. The runs are [`re-scripts/battery_emu.py`](re-scripts/README.md), `led_emu.py` and `macro_emu.py`; each takes your own copy of the official `.hex`.
 - The work was split by subsystem and each part was then re-run and spot-checked against the disassembly. Where the parts met (the battery display flag, the charging LED) they agree.
 
 Corrections this made to older pages are listed in section 4.
+
+---
+
+## 0. Checked on a retail mouse (2026-11-19)
+
+Through a debug build of the patch that reads RAM while the mouse runs (the same build that read the bootloader, [`bootloader-protocol.md`](../../platforms/compx-nrf52/bootloader-protocol.md) 3.1), on the cable, with the owner pressing buttons and watching the LEDs. All **Verified**:
+
+| Finding | What was seen |
+| :--- | :--- |
+| Charging indication (2.3) | Battery block `0x20003074`: percent 100, charging flag 1, average 797 counts. LED 0 framebuffer `00 FF 00` (channel 1 only), and the owner saw a **green** LED. So channel 1 is green. |
+| Sensor burst bit 3 (2.3) | `0x20003023` was 1 while the mouse was held up off the desk and 0 within 50 ms of putting it down; sliding it on the desk left it 0. So bit 3 means **lifted**. While lifted, LED 1 was driven with the current stage's colour (`FF 26 26` for stage index 2 on this unit). |
+| DPI button (3.2) | A press moved the stage index 2 → 3 (live DPI 3200). Holding it moved it once more (→ 0, 400 DPI), and 3.09 s into the hold the battery display flag `0x20003250` turned 1 (3.1). The display itself is not drawn while charging, as 2.3 says. |
+| Chord bug (2.6) | One press of Middle + Forward + DPI (mask `0x34`) on profile 1, then the deferred save: the stored profile's effect `01 → 02`, speed `06 → 13`, DPI X `0x0640 → 0x0C02` (1600 → 3074), DPI Y `0x0640 → 0x0013` (1600 → 19), and zone-2 bytes `P+0x45` / `P+0x47` changed, exactly as emulated. After a real restart (cable unplugged with the switch off) the DPI came up from the stage table (3200), with the DPI fields rebuilt; the effect change stayed. The settings page was then restored from a backup through the bootloader. |
+| Power switch | With the cable plugged in, switching off and on does not restart the MCU (no USB reconnect): USB keeps it powered. |
+
+Not settled: the colour of channel 0 (the owner did not catch the lift colour) and of channel 2.
 
 ---
 
@@ -197,12 +213,12 @@ All emulated through the dispatcher; none was sent to a mouse. `body[6]` = profi
 
 A chord returns without running the third button's own action and schedules a save.
 
-> **Stock bug (emulated, not seen on hardware): three chords overwrite DPI settings.** The colour, speed and effect chords loop over 3 zones of 26 bytes (`cmp #3` at `0x143C6`, `0x1445A`, `0x14500`), but a profile has one zone. Zones 1 and 2 land on `P+0x2B` and `P+0x45`:
+> **Stock bug (emulated; Verified on a retail mouse for M+Forward+DPI, section 0): three chords overwrite DPI settings.** The colour, speed and effect chords loop over 3 zones of 26 bytes (`cmp #3` at `0x143C6`, `0x1445A`, `0x14500`), but a profile has one zone. Zones 1 and 2 land on `P+0x2B` and `P+0x45`:
 > - M+Forward+DPI writes the effect ID to `P+0x2B` (DPI X low byte) and the speed to `P+0x2D` (DPI Y). Profile 1, one press: `P+0x2B` `B0 → 02`, `P+0x2D` `04B0 → 0013`. With new effect 3 it also overwrites the stage count, the stage index and the stages.
 > - M+Back+DPI writes the speed to `P+0x2D` / `P+0x2E` and `P+0x47`.
 > - L+M+DPI (effect 4 or 5, so factory profile 3) writes the colour over the stage count, the stage index and stage 1.
 >
-> The live DPI `0x20003068` is not touched, so the damage would show only after the save and a profile switch or a reboot. **Do not press these chords on a mouse you care about until this is checked**: read the DPI stages over group 1, press one chord, read them again.
+> The live DPI `0x20003068` is not touched. On hardware a restart rebuilt the DPI fields from the stage table, so no lasting DPI change was seen; a profile switch, which programs the sensor from `P+0x2B` (hardware.md 4.3), was not tried. The lighting effect and speed do change for good.
 
 ### 2.7 LEDs off
 

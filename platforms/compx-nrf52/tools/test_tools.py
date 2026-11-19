@@ -75,7 +75,7 @@ def test_hex_tool():
     assert not ok(make_image(sp=0x20008004))
     assert not ok(make_image(reset=BASE + 1))  # inside the vector table
     assert not ok(make_image(magic=False))
-    assert not ok(make_image(size=0x79000))  # ends above 0x7E000
+    assert not ok(make_image(size=0x30820))  # ends above 0x36800
 
     try:
         from intelhex import IntelHex
@@ -97,15 +97,19 @@ def test_hex_tool():
 
 class MockDevice:
     """
-    Compx mouse in app (258a:2018) or bootloader (258a:2103) mode, at the ioctl level, modelled on a
-    retail Series One Pro (2026-11-13): GetBLFW b0 01 00 00; Erase keeps 0x6000..0x1DFFF and 0x7E000 up
-    (0x4D800..0x7DFFF is unreadable, assumed erased); VerifyByAddress answers 0xA2 from 0x4D800 up;
-    Program is read-modify-write.
+    Compx mouse in app (258a:2018) or bootloader (258a:2103) mode, at the ioctl level, modelled on the
+    Series One Pro bootloader's code (read from a unit, 2026-11-19; bootloader-protocol.md 3): GetBLFW
+    b0 01 00 00; Program and VerifyByAddress accept 0x6000..0x4D7FF and act on address + 0x47800 through a
+    4 KB read-modify-write page buffer; Erase only drops that buffer; Exit writes the pending page, copies
+    the touched span of the second copy (0x4D800..) to 0x6000 and resets. old is in both copies, as after
+    a flash.
     """
 
     def __init__(self, mode="bl", old=b"", die_after=None, glitch_on=None, honor_entry=True, blfw=b"\xB0\x01\x00\x00"):
         self.mode, self.flash = mode, bytearray(b"\xFF" * 0x100000)
         self.flash[BASE : BASE + len(old)] = old
+        self.flash[BASE + fl.BANK_OFFSET : BASE + fl.BANK_OFFSET + len(old)] = old
+        self.page, self.buf, self.span = None, None, None  # pending page buffer, touched pages (lo, hi)
         self.die_after, self.glitch_on, self.honor_entry, self.blfw = die_after, glitch_on, honor_entry, blfw
         self.programs, self.ops, self.ioctls, self.resp, self.clock = [], [], 0, bytes(64), 0.0
 
@@ -153,26 +157,41 @@ class MockDevice:
             r[0], r[8:12] = 0xA1, self.blfw
             self.resp = bytes(r)
         elif op == 0x01:
-            self.flash[0x1E000:0x7E000] = b"\xFF" * (0x7E000 - 0x1E000)  # the old image head and 0x7E000 stay
+            self.page = self.buf = None  # drops the page buffer; no flash changes
             self.ok()
-        elif op == 0x02:
+        elif op in (0x02, 0x83):
+            if not 0x6000 <= addr < 0x4D800:  # verified on hardware: 0xA2 below 0x6000 and from 0x4D800 up
+                return self.ok(status=0xA2)
+            page = (addr + fl.BANK_OFFSET) & ~0xFFF
+            lo, hi = self.span or (addr >> 12, addr >> 12)
+            self.span = (min(lo, addr >> 12), max(hi, addr >> 12))
+            if op == 0x83:
+                self.flush()
+                return self.ok(bytes(b ^ 0x55 for b in self.flash[addr + fl.BANK_OFFSET : addr + fl.BANK_OFFSET + n]))
             if self.die_after is not None and len(self.programs) == self.die_after:
                 self.mode = "gone"
                 raise OSError(errno.ENODEV, "unplugged")
             self.programs.append(addr)
+            if page != self.page:
+                self.flush()
+                self.page, self.buf = page, bytearray(self.flash[page : page + 0x1000])
             for i in range(n):
-                self.flash[addr + i] = f[11 + i] ^ 0x55  # read-modify-write: exact bytes, rest of page kept
+                self.buf[(addr + fl.BANK_OFFSET - page) + i] = f[11 + i] ^ 0x55
             self.ok()
             if len(self.programs) == self.glitch_on:
                 raise OSError(errno.ETIMEDOUT, "status stage timeout")
-        elif op == 0x83:
-            if addr >= 0x4D800:  # the hardware limit (verified 2026-11-13), not fl.READ_TOP
-                self.ok(status=0xA2)
-            else:
-                self.ok(bytes(b ^ 0x55 for b in self.flash[addr : addr + n]))
         elif op == 0x04:
+            self.flush()
+            lo, hi = self.span or (0, 0x47)
+            size = min((hi - lo + 1) * 0x1000, fl.BANK_OFFSET)  # the bootloader copies from the bank start
+            self.flash[BASE : BASE + size] = self.flash[BASE + fl.BANK_OFFSET : BASE + fl.BANK_OFFSET + size]
             self.mode = "app"
             raise OSError(errno.EPIPE, "reset")
+
+    def flush(self):
+        if self.page is not None:
+            self.flash[self.page : self.page + 0x1000] = self.buf
+            self.page = self.buf = None
 
     def install(self, backend=None):
         def sleep(s):
@@ -262,25 +281,24 @@ def test_flasher(tmp: Path):
     m.flash[0x7E000:0x7E020] = bytes(range(32))  # the patch's saved profile page
     assert run(fl.cmd_flash, firmware_hex=str(good)) == 0
     assert m.mode == "app" and m.flash[BASE : BASE + len(padded)] == padded
-    assert m.flash[0x7E000:0x7E020] == bytes(range(32)), "Erase must not reach 0x7E000"
-    assert m.programs[:2] == [BASE, BASE + 32] and m.programs[-1] == BASE, "blank 0x6000 first, vector table last"
-    assert len(m.programs) == len(padded) // 32 + 1 and len(set(m.programs)) == len(padded) // 32
+    assert m.flash[0x7E000:0x7E020] == bytes(range(32)), "flash must not reach the 0x7E000 page"
+    assert m.programs[0] == BASE + 32 and m.programs[-1] == BASE, "vector table last"
+    assert len(m.programs) == len(padded) // 32 and len(set(m.programs)) == len(padded) // 32
 
     m = MockDevice(mode="bl", old=old, die_after=40).install()
     assert isinstance(run(fl.cmd_flash, firmware_hex=str(good)), OSError)
-    assert m.flash[BASE : BASE + 32] == b"\xFF" * 32, "interrupted flash must leave 0x6000 blank (Erase keeps it)"
-    m = MockDevice(mode="bl", old=old, die_after=0).install()
-    assert isinstance(run(fl.cmd_flash, firmware_hex=str(good)), OSError)
-    assert m.flash[BASE : BASE + 32] == old[:32], "before the 0xFF write the old vector table is still there"
+    assert m.flash[BASE : BASE + len(old)] == old, "an interrupted flash leaves the application untouched"
 
     big = tmp / "big.hex"
-    big.write_text(hx.encode_compx_hex(make_image(size=fl.READ_TOP - BASE + 32), BASE))
+    big.write_text(hx.encode_compx_hex(make_image(size=fl.PROGRAM_TOP - BASE + 32), BASE))
     m = MockDevice(mode="bl").install()
     err = run(fl.cmd_flash, firmware_hex=str(big))
-    assert isinstance(err, RuntimeError) and "read back" in str(err) and m.ioctls == 0
-    big.write_text(hx.encode_compx_hex(make_image(size=fl.READ_TOP - BASE), BASE))
+    assert isinstance(err, (RuntimeError, ValueError)) and m.ioctls == 0, "an image over 0x36800 reaches no device"
+    big.write_text(hx.encode_compx_hex(make_image(size=fl.PROGRAM_TOP - BASE), BASE))
     m = MockDevice(mode="bl").install()
-    assert run(fl.cmd_flash, firmware_hex=str(big)) == 0, "an image ending exactly at 0x4D800 is readable"
+    m.flash[0x7E000:0x7E020] = bytes(range(32))
+    assert run(fl.cmd_flash, firmware_hex=str(big)) == 0, "an image ending exactly at 0x36800 is allowed"
+    assert m.flash[0x7E000:0x7E020] == bytes(range(32)), "and leaves the 0x7E000 page alone"
 
     m = MockDevice(mode="bl", old=old, blfw=b"\xB0\x02\x00\x00").install()
     err = run(fl.cmd_flash, firmware_hex=str(good))
@@ -291,7 +309,7 @@ def test_flasher(tmp: Path):
 
     m = MockDevice(mode="bl", glitch_on=5).install()
     assert run(fl.cmd_flash, firmware_hex=str(good)) == 0
-    assert len(m.programs) == len(set(m.programs)) + 1, "a SET error must not cause a blind resend"
+    assert len(m.programs) == len(set(m.programs)), "a SET error must not cause a blind resend"
     fifth = [i for i, op in enumerate(m.ops) if op == 0x02][4]
     assert m.ops[fifth + 1] == 0x83, "the failed SET is read back"
 
@@ -318,7 +336,8 @@ def test_flasher(tmp: Path):
     out = tmp / "backup.hex"
     assert run(fl.cmd_dump, out=str(out), start=BASE, end=0x100000, stay_in_bl=False) == 0 and m.mode == "app"
     data, lo, hi, *_ = hx.parse_compx_hex(out)
-    assert (lo, hi) == (BASE, fl.READ_TOP) and data == bytes(m.flash[BASE:hi]), "dump stops where reads are refused"
+    assert (lo, hi) == (BASE, fl.READ_TOP), "dump stops where reads are refused"
+    assert data == bytes(m.flash[BASE + fl.BANK_OFFSET : hi + fl.BANK_OFFSET]), "dump returns the second copy"
     assert isinstance(run(fl.cmd_dump, out=str(out), start=BASE, end=0x100000, stay_in_bl=False), ValueError)
     assert not any(m.programs), "dump must never program"
 
