@@ -22,8 +22,10 @@ Through a debug build of the patch that reads RAM while the mouse runs (the same
 | DPI button (3.2) | A press moved the stage index 2 → 3 (live DPI 3200). Holding it moved it once more (→ 0, 400 DPI), and 3.09 s into the hold the battery display flag `0x20003250` turned 1 (3.1). The display itself is not drawn while charging, as 2.3 says. |
 | Chord bug (2.6) | One press of Middle + Forward + DPI (mask `0x34`) on profile 1, then the deferred save: the stored profile's effect `01 → 02`, speed `06 → 13`, DPI X `0x0640 → 0x0C02` (1600 → 3074), DPI Y `0x0640 → 0x0013` (1600 → 19), and zone-2 bytes `P+0x45` / `P+0x47` changed, exactly as emulated. After a real restart (cable unplugged with the switch off) the DPI came up from the stage table (3200), with the DPI fields rebuilt; the effect change stayed. The settings page was then restored from a backup through the bootloader. |
 | Power switch | With the cable plugged in, switching off and on does not restart the MCU (no USB reconnect): USB keeps it powered. |
+| LED colours (2.1) | Without the debug build: the profile 1 stage colours were read with group 2 `0x81` over the receiver (`FFA40D`, `26B4FF`, `FF2626`, `18B30A`), then the owner lifted the mouse on each stage and saw pink, green, yellow, cyan for stages 3, 4, 1, 2. With channel 1 green, that makes **channel 0 red and channel 2 blue** (swapped, `FF2626` would have looked blue). LED 1 is a single LED **next to the sensor**, on the underside. |
+| Chord bug, second press, then a profile switch (2.6) | 2026-11-19, a second M+Forward+DPI press (effect `02 → 03`) on profile 1, the deferred save, then host group 0 `0x05` to profile 2 and back to 1 over the receiver. The mouse became very fast on every stage, the **left button stopped working** and the DPI LED changed colour. The saved page, read back through the bootloader, had 48 bytes changed (list in 2.6). Restored from the backup through the bootloader; group 3 `0x80` and group 2 `0x80` / `0x81` then read the original values, and the owner found the mouse normal. |
 
-Not settled: the colour of channel 0 (the owner did not catch the lift colour) and of channel 2.
+Not settled: how many LEDs LED 0 is (the charging green was seen, its place was not noted).
 
 ---
 
@@ -139,7 +141,7 @@ The source file name `Source\led.c` is a string at `0xD9D8` (**Verified**).
 
 - **Verified** (table values): the `nrf_drv_pwm` configs at `0x1A6D4` and `0x1A6E0` are `0D 0F 11 FF 07 07 00 00 FF 00 02 00` and `14 16 18 FF 07 07 00 00 FF 00 02 00`: pins, IRQ priority 7, `PRESCALER` 7 (125 kHz), up-counting, `COUNTERTOP` `0x00FF`, load mode 2 (individual). No pin has the "inverted" flag. So the PWM frequency is about 490 Hz with 8-bit duty.
 - LED init `0xD91C` (called from main `0xE8AC` and from `0x9A7A`). Emulated register writes: `PSEL.OUT[0..2]` = 13, 15, 17 and 20, 22, 24, `PRESCALER` 7, `COUNTERTOP` `0xFF`, `DECODER` 2, `LOOP` 1, `INTEN` on `PWM0` only.
-- Which colour is which is **Inferred** from use only: the first byte of every stored RGB triple goes to channel 0, the low-battery blink uses channel 0 only and "full" uses channel 1 only. Red/green/blue on the board is **Unknown** until a LED is watched or a pin probed.
+- Channel 0 is **red**, channel 1 **green**, channel 2 **blue** (**Verified** on LED 1 and, for green, LED 0, 2026-11-19, section 0). The first byte of every stored RGB triple goes to channel 0, so stored colours are R, G, B. The low-battery blink uses red only and "full" green only.
 - Polarity: every compare value is written as `value | 0x8000` (`0xA40C`–`0xA438`), the pins are not inverted, and "off" drives the pins low. So the LEDs look active-high.
 - Only `PWM0` has an event handler, `0xA3D0`. It copies the framebuffer `0x20004D60` into both sequence buffers.
 - **No LED power enable was found.** `P0.14` is configured as an output and driven **low** once in GPIO init (`0xC636`–`0xC64A`); `P0.26` is driven high (`0xC61A`–`0xC632`). No other code touches either pin, and neither LED-off nor sleep does. Their roles are **Unknown** (needs a probe).
@@ -215,10 +217,11 @@ A chord returns without running the third button's own action and schedules a sa
 
 > **Stock bug (emulated; Verified on a retail mouse for M+Forward+DPI, section 0): three chords overwrite DPI settings.** The colour, speed and effect chords loop over 3 zones of 26 bytes (`cmp #3` at `0x143C6`, `0x1445A`, `0x14500`), but a profile has one zone. Zones 1 and 2 land on `P+0x2B` and `P+0x45`:
 > - M+Forward+DPI writes the effect ID to `P+0x2B` (DPI X low byte) and the speed to `P+0x2D` (DPI Y). Profile 1, one press: `P+0x2B` `B0 → 02`, `P+0x2D` `04B0 → 0013`. With new effect 3 it also overwrites the stage count, the stage index and the stages.
+> - **Verified for effect 3** (2026-11-19, section 0): the saved page of profile 1 after the press that moved effect 2 → 3, against the backup. Effect `P+0x11` `01 → 03` and speed `P+0x13` `06 → 0C` (the backup predates the first press); DPI `P+0x2B..0x2E` `4006 4006 → 0315 0313`; stage count `P+0x30` `04 → FF` and stage index `P+0x31` `02 → 1D`; the stage table `P+0x32..0x45` filled with colour bytes; `P+0x47` `19 → 0C`; stage colours 1–4 `P+0x4B..0x57` overwritten; and `P+0x5A..0x5E` `00 00 01 01 01 → FF FF FF FF FF`, which takes in **button slot 0's code byte `P+0x5C`** (`01` = Left → `FF`), so no slot answers to the left button and it does nothing. The page checksum at `0x264` was updated, so the firmware accepts the damage at boot.
 > - M+Back+DPI writes the speed to `P+0x2D` / `P+0x2E` and `P+0x47`.
 > - L+M+DPI (effect 4 or 5, so factory profile 3) writes the colour over the stage count, the stage index and stage 1.
 >
-> The live DPI `0x20003068` is not touched. On hardware a restart rebuilt the DPI fields from the stage table, so no lasting DPI change was seen; a profile switch, which programs the sensor from `P+0x2B` (hardware.md 4.3), was not tried. The lighting effect and speed do change for good.
+> The live DPI `0x20003068` is not touched. After the first press (effect 1 → 2) a restart rebuilt the DPI fields from the stage table, so no lasting DPI change was seen. After the second (2 → 3) a profile switch away and back, which programs the sensor from `P+0x2B` (hardware.md 4.3), made the mouse very fast on both axes (the sensor setup uses X only, hardware.md 4.1) and on every stage, and the left button dead; these changes are saved, so a restart does not undo them. Only restoring the settings page (or the 5 s L+R+M factory reset, not tried) does. How much breaks depends on the effect the chord moves to.
 
 ### 2.7 LEDs off
 
@@ -376,8 +379,8 @@ Event bytes (the first byte is the opcode; decode at `0xE3C6`–`0xE68E`):
 
 - The VDD level and the divider on `P0.31`, so the real voltages of the battery tables. Settle: a meter on VDD and `P0.31`.
 - What `P1.04`, `P0.14` and `P0.26` are wired to, and which charger IC drives `P1.06`. Settle: PCB tracing.
-- How many LEDs are fitted, where they are, and the colour of each PWM pin. Settle: watch the LEDs.
-- Whether the chord bug of 2.6 shows on a retail mouse, and what the write to address 0 (2.4) does there.
+- Where LED 0 sits and whether it is one LED (LED 1 is one LED next to the sensor; colours settled, section 0).
+- What the write to address 0 (2.4) does on hardware. (The chord bug of 2.6 is Verified on a retail mouse.)
 - The intended look of the stored effects; their renderers are not in this image.
 - Whether Glorious Core writes macros in this event encoding and which opcodes it uses. Settle: a USB capture of the vendor software.
 - Real macro timing (the tick is 1 ms only while the main loop keeps up), and which wheel direction is index 6.
