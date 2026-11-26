@@ -1,12 +1,9 @@
 /*
  * Glorious Forge Series One Pro Wireless (CM2852-BAMF) — ZMK / Zephyr Board Devicetree
  *
- * GPIO pins, SPI2 sensor bus and flash layout are Inferred from disassembly of
- * CM2856_Mouse_USB_v1.00.00_20220810.hex; nothing here has run on hardware.
- *
- * Blocker: no Zephyr/ZMK driver exists for the PAW3370 / BAMF sensor, so the sensor
- * node and its input listener are disabled. The image builds and handles buttons,
- * wheel and bootloader re-entry, but does not track motion.
+ * GPIO pins, SPI2 sensor bus, PAW3370 register sequence and flash layout are Inferred
+ * from disassembly of CM2856_Mouse_USB_v1.00.00_20220810.hex; nothing here has run on
+ * hardware yet.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -82,11 +79,10 @@
         enable-gpios = <&gpio0 14 GPIO_ACTIVE_HIGH>;
     };
 
-    /* Enable together with paw3370_bamf once a driver exists */
-    mouse_input_listener {
+    mouse_input_listener: mouse_input_listener {
         compatible = "zmk,input-listener";
         device = <&paw3370_bamf>;
-        status = "disabled";
+        status = "okay";
     };
 };
 
@@ -144,14 +140,15 @@
     pinctrl-names = "default", "sleep";
     cs-gpios = <&gpio0 4 GPIO_ACTIVE_LOW>;
 
-    /* No driver for this compatible exists anywhere (Zephyr, ZMK, community modules) */
+    /* In-tree driver in paw3370.c (Inferred from stock firmware; untested on hardware) */
     paw3370_bamf: paw3370@0 {
         compatible = "pixart,paw3370";
-        status = "disabled";
+        status = "okay";
         reg = <0>;
         spi-max-frequency = <4000000>;
         irq-gpios = <&gpio0 6 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
         cpi = <800>;
+        lod-mm = <1>;
     };
 };
 
