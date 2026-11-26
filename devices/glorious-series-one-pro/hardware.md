@@ -45,7 +45,7 @@ Passive inspection of `/sys/class/hidraw/hidraw4..6/device/report_descriptor` on
      - `0x01`: Consumer Control (16-bit usage `0x0000..0x023C`)
      - `0x02`: System Control (Power/Sleep/Wake)
      - `0x03`: Standard 8-byte modifier + 6KRO Keyboard report (for macro/keybind playback)
-     - `0x04`: Vendor Usage Page `0xFFA0` (8-byte Input report). **Inferred**: the DPI, profile and host-button notifications go out with this ID ([`firmware-subsystems.md`](firmware-subsystems.md) 3.3); there is no battery notification
+     - `0x04`: Vendor Usage Page `0xFFA0` (8-byte Input report). **Verified** on hardware over `258a:2031` (2026-11-26) for type-1 DPI notification (`04 01 03 06 40 06 40 00 00`) and link-state notifications (`04 06 00` / `04 06 01`); profile and host-button notifications **Inferred** ([`firmware-subsystems.md`](firmware-subsystems.md) 3.3); there is no battery notification
      - `0x05`: Vendor Usage Page `0xFFFF` (8-byte Input report). No sender was found; an earlier version of this page gave it the notifications
 
 3. **Interface 2 (`input2` / `hidraw6`) — Vendor Configuration Feature Channel (20 bytes)**
@@ -210,7 +210,7 @@ From two independent disassembly passes over `CM2856_Mouse_USB_v1.00.00_20220810
 - So a held DPI shift programs the sensor without updating `0x20003068`. No RAM variable holds a shift flag or the programmed DPI (Unicorn write trace of a press and a release). While shift is held, any other DPI write (DPI button, wheel, host command, the `0x19584` re-init) overrides it until the next press.
 - Host DPI commands 1 (set stages) and 2 (set stage index) aimed at a profile that is not active write that profile's current-stage DPI into `0x20003068` and into the active profile's `P+0x2B` / `P+0x2D`, but do not program the sensor (`0x153A6`–`0x153F4`, `0x154E8`–`0x15522`; Unicorn). Whether Glorious Core ever sends them for an inactive profile is **Unknown**.
 - open-directional-dpi builds after `56afbb4` therefore record the DPI inside `0x17860` (a `bl` at `0x17864`), which covers all 10 callers; `21ea252` and main `56afbb4` read `0x20003068`.
-- **Key assignment** (host): command group 3 (`feat[4] = 3`, handler `0x00014540`), `feat[5] = 0x00` to set and `0x80` to get, `feat[6..15]` = profile (1-based), button code, layer, `f0..f6`. A set on the active profile also refreshes `0x20004B30`. In Unicorn, `feat[6..15] = 01 04 00 07 01 05 01 90 01 90` gave Back a 400-DPI shift (reply `0xA1`); pressing it gave 400, releasing it 1200. Not sent to a mouse.
+- **Key assignment** (host): command group 3 (`feat[4] = 3`, handler `0x00014540`), `feat[5] = 0x00` to set and `0x80` to get, `feat[6..15]` = profile (1-based), button code, layer, `f0..f6`. A set on the active profile also refreshes `0x20004B30`. **Verified** on a retail unit over `258a:2031` (2026-11-26): `feat[6..15] = 01 04 00 07 05 05 01 90 01 90` (reply `0xA1`, read back with `0x80`) gave Back a 400-DPI shift; holding Back dropped open-directional-dpi `sensor_dpi` `1600 → 400`, emitted interface-1 notification `04 01 03 06 40 06 40 00 00` (confirming `0x20003068` stays `1600`), and releasing Back returned `sensor_dpi` to `1600`. Restored to `01 01 04 00 00 00 00` and verified via `0x80`.
 - The stage index is not a reliable stand-in for the DPI. The factory defaults boot at 1200 DPI with index 2, and the DPI-adjust wheel and the host "set DPI" command change the DPI without changing the index.
 
 ### 4.2 Millisecond tick (Inferred from disassembly; rate on the cable Verified, 2026-11-13)

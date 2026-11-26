@@ -278,7 +278,7 @@ Type 7 sub-functions (`f2`, jump table `0xA622`), on press unless noted:
 | 6 | `0xA758` | stage up with wrap (the factory DPI button) |
 | 7 | `0xA76E` | stage down with wrap |
 
-Every type 7 press also queues notification type 1 (stage + 1, DPI X, DPI Y big-endian; `0xA77A`–`0xA7A2`).
+Every type 7 press also queues notification type 1 (stage + 1, DPI X, DPI Y big-endian; `0xA77A`–`0xA7A2`). **Verified** on hardware over `258a:2031` (2026-11-26): holding a 400-DPI shift button on stage index 2 (1600 DPI) emitted `04 01 03 06 40 06 40 00 00` on interface 1 (report ID 4, type 1, stage 3, `0x0640` = 1600 from `0x20003068`).
 
 ### 3.3 How keys reach USB
 
