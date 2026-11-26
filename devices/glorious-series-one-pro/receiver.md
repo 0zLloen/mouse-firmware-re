@@ -77,8 +77,8 @@ All **Verified** on a retail receiver and mouse, 2026-11-13, unless marked:
 | :---: | :--- | :--- | :---: | :--- |
 | `0x81` | Version | Replies `body[3] = 0x04`, `body[6..11] = 01 00 00 00 20 31` (v1.0.0.0, PID `0x2031`) (`@ 0x0000C762`) | Yes | **Verified** reply, 2026-11-13 |
 | `0x89` | Link state | `body[6]` = `0x20000056`: `01` while the mouse is linked, `00` without a link (`@ 0x0000C7E6`). `body[5]` is kept and `body[0]` becomes `A1` (`@ 0x0000C9F6`). open-directional-dpi hosts send it before each relayed request. | Yes | **Verified** (`01` and `00`), 2026-11-13/17 |
-| `0x8A` | RF ID read | `body[6..9]` = config bytes `+2..+5` (`@ 0x0000C800`). Unit-specific: redact it in anything you publish. | Read-only | **Inferred** (not sent) |
-| `0x00` | Set mode | Mode in `body[6]`. `0xB0` stores `0xA55AA55A` at `0x20007FFC` (`@ 0x0000C7A8`) and resets (`0x00007AF0`, `AIRCR`): the receiver bootloader `258a:2113`. `0xC0` resets; `0xA0` copies 9 bytes into radio state (not traced). | **No** | **Inferred** (not sent) |
+| `0x8A` | RF ID read | `body[6..9]` = config bytes `+2..+5` (`@ 0x0000C800`). Unit-specific: redact it in anything you publish. | Read-only | **Verified** (2026-11-26): answered `0xA1` in `4.0 ms`, matching both relayed mouse `0x8A` (`8.0 ms`) and the unit's `FICR DEVICEID[0]` byte for byte |
+| `0x00` | Set mode | Mode in `body[6]`. `0xB0` stores `0xA55AA55A` at `0x20007FFC` (`@ 0x0000C7A8`) and resets (`0x00007AF0`, `AIRCR`): the receiver bootloader `258a:2113`. `0xA0` enters RF test mode (`radio_test`): copies 9 bytes (`body[7..15]`) to `0x2000027C` (`+0` selector, `+1` sub-mode `0..4`, `+2` `MODE`, `+3` `TXPOWER`, `+4` `FREQUENCY`/start, `+5` end, `+6` step), stops the normal radio and timers (`0xCBB4`, `0xDF48`, `0xDFB0`), calls `0xD190` when `body[7]` is `0`, `1` or `5`, skips USB SOF frame start (`0xE786`) and normal main-loop tasks (`0xA582`), and runs `0xDE68` in the main loop; any later `0x00` with mode `!= 0xA0` resets (`0xC78A → 0x7AF0`). `0xC0` resets (`0x7AF0`) when `body[7] == 0`, else no-op (`0xA1`). `0x00` is normal mode (no-op unless leaving `0xA0`). | **No** | **Inferred** (disassembly, 2026-11-26; not sent) |
 | `0x0A` | RF ID write | Stores `body[6..9]` at config `+2` and sets the save flag (`@ 0x0000C7EE`); the main loop then rewrites the config page (section 5). Unpairs the mouse. | **No** | **Inferred** (not sent) |
 | other | — | `0xA3`, the rest of the request echoed (`@ 0x0000C75C`). `0x83` (battery) is one of them. | Yes | **Verified** for `0x83`, 2026-11-13 |
 
@@ -94,5 +94,4 @@ The application-to-bootloader packet of the wired mouse (`body[3] = 0x01`, `body
 
 - The receiver bootloader (`258a:2113`): never seen enumerating; its `Erase` extent and address limits are untested.
 - The exact MCU part (section 1.1): probably an nRF52820; only the chip marking would settle it, and no photo of this receiver's board is public.
-- Mode values other than `0xB0` (`0xA0`, `0xC0`).
 - Why the link drops for `40.0 ms` (`0x89`: `01 → 00 → 01`) every ~`0.5`–`1.8 s` while the mouse is still on the first host, and never on a second host (section 3). Host clock drift fits; a radio sniffer would prove it.
