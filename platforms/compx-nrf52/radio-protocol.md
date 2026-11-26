@@ -202,7 +202,11 @@ By the code, the two sides start the hop sequence about 2.6 ms apart (**Inferred
 
 - **With answer 1 lost** the mouse takes answer 4. That is the next one on its channel, 1.5 ms later, and puts the two sides close enough to meet on channel 1. In the two phases that needed a second connect, the first one left a half-link: at 20.4 ms the receiver's link flag was up from 86.4 ms, but the mouse never got an ACK, gave up, and searched again.
 - **An artifact found and removed.** An earlier version of the emulation started USB SOFs before the receiver's radio init. That left `R[0xB]` = 1 and let 1 phase in 10 link without a lost answer.
-- **The contradiction.** The real pair does link; this is **Verified** on a retail unit in the device docs. So either the mouse misses answer 1 on hardware for a reason the model lacks (radio ramp-up, the receiver's interrupt latency, or RF loss), or the race is resolved by something not yet found in the code. **Unknown**, and a hardware check (section 8).
+- **Hardware check (Verified, 2026-11-26, 9 off→on power cycles in 45 s, polling `0x89` every 2 ms alongside interface 1 notifications):** the race happens on real hardware too — cold connects regularly fail 1 or 2 attempts before linking, and hit the half-link predicted above:
+  - **Failed connects while already unlinked (`0x89 == 0`)**: in 4 of the power cycles the receiver emitted link-loss `03 00 …` + `04 06 00` while `0x89` was already `0` (receiver entered state 10 after answering, hopped 256 ms without hearing the mouse, and timed out), followed 49–65 ms later by a clean link (`0x89: 0 → 1` and `04 06 01` within 5 ms). One cycle had **two failed connects in a row** (`04 06 00` at `40.370 s` and `40.699 s`, 329 ms apart, then clean link at `40.748 s`).
+  - **Half-link observed**: on another cycle, after a failed connect (`21.841 s`), `0x89` rose `0 → 1` at `21.920 s` with **no** `04 06 01` from the mouse, fell back `1 → 0` (`04 06 00`) 462 ms later (`22.382 s`), and linked cleanly 56 ms later (`22.438 s`, `04 06 01` 5 ms later).
+  - **Delayed `04 06 01` on direct cold connects**: on the 4 cycles that did not log a prior `04 06 00`, `0x89` rose `0 → 1` first and `04 06 01` arrived 215–257 ms later (`11.172 → 11.429 s`, `16.051 → 16.266 s`, `18.728 → 18.943 s`, `43.944 → 44.186 s`), against 5 ms on the immediate retries.
+  - Which of the 6 connect answers the mouse follows when a connect does succeed remains **Unknown** until sniffed on air (section 8).
 - **For open firmware** this does not matter if it stays on hop channel 0 until the first ACK (section 7).
 
 ### 3.4 States
@@ -521,7 +525,7 @@ Checks run on a retail unit are marked **Verified**; the rest have not been run 
    - Prediction: drops only while still, and only where the mouse's clock is fast relative to that host's SOF.
 4. **Downlink wrap (4.3):** **Verified (2026-11-26)**. 40× 2-chunk `0x81` queries passed 40/40; after flipping parity with one 1-chunk `0x83` battery query, 70 back-to-back 2-chunk `0x81` queries hit the wrap bug at iterations 30 and 61 (exactly 31 queries = 62 distinct downlink chunks apart), returning `a1 00 00 00 00 00 00 00 00 00 20 18` (bogus zeroed group-0 reply).
 5. **Connect race (3.3):**
-   - switch the mouse off and on and time until `0x89` reads `01`;
-   - with the sniffer on the 3 connect channels, see which answer (1st, 4th, …) the mouse follows, and when the first ACK comes.
+   - **Verified on hardware (2026-11-26):** 9 off→on power cycles polling `0x89` (2 ms) + interface 1 confirmed the race occurs on real hardware — failed connects (`04 06 00` emitted while `0x89 == 0`, including two in a row 329 ms apart before a clean link 49 ms later) and a half-link (`0x89: 0 → 1` with no `04 06 01`, dropping after 462 ms, then clean link 56 ms later);
+   - still to do with the sniffer on the 3 connect channels: see which answer (1st, 4th, …) the mouse follows when it does link, and when the first ACK comes.
 6. **Receiver MCU:** a PCB photo (`receiver.md` section 1). The image points to an nRF52820 (2.1).
 7. **Bits on air:** an SDR capture of a keep-alive, compared with `compx_radio.air_bits()`. It settles the bit order and the CRC under erratum 245 (2.2). Only a non-Nordic tool needs this.
