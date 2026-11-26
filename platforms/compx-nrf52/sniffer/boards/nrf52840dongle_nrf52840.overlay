@@ -1,0 +1,6 @@
+/* Expose one USB CDC-ACM port (zephyr,cdc-acm-uart) for control commands and PKT lines. */
+&zephyr_udc0 {
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+	};
+};

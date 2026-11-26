@@ -17,6 +17,7 @@ mouse-firmware-re/
 │       │                                  #   receiver 258a:2113: 28 KB, app at 0x7000)
 │       ├── radio-protocol.md              # 2.4 GHz mouse-receiver link (258a:2031): PHY, pairing, link layer, records,
 │       │                                  #   co-emulation of both images, what open firmware needs
+│       ├── sniffer/                       # Passive 2.4 GHz sniffer for an nRF52840 USB dongle (PCA10059) + Python decoder
 │       └── tools/
 │           ├── compx_hex_tool.py          # Plain Intel HEX decode/encode and offline safety audit
 │           ├── compx_usb_flasher.py       # Probe, full read-back verifier, and .hex programmer (Linux hidraw;
