@@ -495,7 +495,7 @@ static int paw3370_init(const struct device *dev)
 
 #define PAW3370_DEFINE(n)                                                                          \
 	static const struct paw3370_config paw3370_cfg_##n = {                                     \
-		.spi = SPI_DT_SPEC_INST_GET(n, PAW3370_SPI_OP),                                    \
+		.spi = SPI_DT_SPEC_INST_GET(n, PAW3370_SPI_OP, 0),                                 \
 		.irq_gpio = GPIO_DT_SPEC_INST_GET(n, irq_gpios),                                   \
 		.cpi = DT_INST_PROP(n, cpi),                                                       \
 		.lod_mm = DT_INST_PROP(n, lod_mm),                                                 \
