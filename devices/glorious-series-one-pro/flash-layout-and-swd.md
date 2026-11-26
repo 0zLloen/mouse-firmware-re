@@ -165,5 +165,5 @@ openocd -f interface/cmsis-dap.cfg -c "transport select swd; adapter speed 1000;
       -c "init; halt; dump_image backup_full_1mb.bin 0x00000000 0x100000; dump_image backup_uicr.bin 0x10001000 0x1000; resume; shutdown"
     ```
   - **`0x00000000`**: **Readback-protected (`APPROTECT` enabled in UICR).**
-    - **DO NOT run `nrf52_recover` or `nrfjprog --recover`!** Unlocking via CTRL-AP `ERASEALL` would erase the 24 KB bootloader (`0x00000000`–`0x00005FFF`) and RF pairing page (`0x00088000`).
-    - Instead, use the **USB HID Bootloader (`258a:2103`)** path documented in `flashing-feasibility.md`. It only programs `0x00006000`+, so the bootloader is never written; whether its `Erase` clears the pairing page is Unknown (Inferred not, 4.2).
+    - **DO NOT run `nrf52_recover` or `nrfjprog --recover`!** Unlocking via CTRL-AP `ERASEALL` would erase the 24 KB bootloader (`0x00000000`–`0x00005FFF`) and unit settings pages (`0x7E000`, `0x8B000`, `0x8C000`).
+    - Instead, use the **USB HID Bootloader (`258a:2103`)** path documented in `flashing-feasibility.md`. `Erase` changes no flash and `Program` writes at address + `0x47800`, so the bootloader is never written and images ending at or below `0x36800` leave all settings pages untouched ([`bootloader-protocol.md`](../../platforms/compx-nrf52/bootloader-protocol.md) section 3).

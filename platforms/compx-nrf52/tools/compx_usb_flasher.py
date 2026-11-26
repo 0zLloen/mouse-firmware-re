@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
 USB HID bootloader prober, verifier and programmer for Compx / Nordic nRF52840 mice
-(Glorious Series One Pro: app 258a:2018, resident bootloader 258a:2103). Linux: hidraw, standard
-library only. Windows and macOS: the PyPI package hidapi (pip install hidapi; untested there). On Linux
---backend hidapi uses hidapi's hidraw module, never its libusb one.
+(Glorious Series One Pro: mouse app 258a:2018 / bootloader 258a:2103; receiver app 258a:2031 /
+bootloader 258a:2113, read-only probe/dump/verify-bl via --target receiver, flash refused). Linux:
+hidraw, standard library only. Windows and macOS: the PyPI package hidapi (pip install hidapi;
+untested there). On Linux --backend hidapi uses hidapi's hidraw module, never its libusb one.
 
 Implements the C52840Dongle USB HID Feature-report ISP protocol from FirmwareUpdate.exe:
   probe      read-only: report which mode the mouse is in and its version.
@@ -67,9 +68,13 @@ def HIDIOCGFEATURE(length: int) -> int:
 VID_SINOWEALTH = 0x258A
 PID_MOUSE_APP = 0x2018
 PID_MOUSE_BL = 0x2103
+PID_RECEIVER_APP = 0x2031
+PID_RECEIVER_BL = 0x2113
 
 APP_BASE_ADDR = compx_hex_tool.MOUSE_APP_BASE
+RECEIVER_APP_BASE = compx_hex_tool.RECEIVER_APP_BASE
 FLASH_END = 0x00100000  # nRF52840: 1 MiB
+RECEIVER_FLASH_END = 0x00040000  # nRF52820 (inferred): 256 KiB
 READ_TOP = 0x0004D800  # VerifyByAddress answers 0xA2 from here up (retail Series One Pro, 2026-11-13)
 BANK_OFFSET = 0x47800  # Program / VerifyByAddress address + this = flash written / read (bootloader code, 2026-11-19)
 PROGRAM_TOP = 0x7E000 - BANK_OFFSET  # 0x36800: higher image bytes would land on the 0x7E000 settings page
@@ -81,6 +86,23 @@ STATUS_ERR = (0xA2, 0xA3, 0xA4)
 # errnos a SET may return when the device resets/detaches while handling it
 RESET_ERRNOS = (errno.ENODEV, errno.EPIPE, errno.ESHUTDOWN, errno.EPROTO, errno.EIO, errno.ETIMEDOUT)
 # Seen on a retail Series One Pro (2026-11-13): SetBLDeviceMode -> EPROTO, Exit -> ETIMEDOUT.
+
+TARGETS = {
+    "mouse": {
+        "label": "Wired mouse",
+        "app_pid": PID_MOUSE_APP,
+        "bl_pid": PID_MOUSE_BL,
+        "app_base": APP_BASE_ADDR,
+        "flash_end": FLASH_END,
+    },
+    "receiver": {
+        "label": "2.4 GHz receiver",
+        "app_pid": PID_RECEIVER_APP,
+        "bl_pid": PID_RECEIVER_BL,
+        "app_base": RECEIVER_APP_BASE,
+        "flash_end": RECEIVER_FLASH_END,
+    },
+}
 
 
 def find_hidraw_feature_node(target_vid: int, target_pid: int, sysfs: str = "/sys/class/hidraw") -> Path | None:
@@ -271,13 +293,23 @@ def _bl_request(length: int, opcode: int) -> bytearray:
 
 
 def query_app_fw_version(dev: CompxHidDevice) -> tuple[tuple[int, int, int, int], int]:
-    """Send standard read-only Glorious FW Version query (0x00, 0x81) to 258a:2018."""
+    """Send standard read-only Glorious FW Version query (0x00, 0x81) to app mode (258a:2018 or 258a:2031)."""
     req = bytearray(64)
     req[3], req[4], req[5] = 0x06, 0x00, 0x81
     resp = dev.command(bytes(req), delay_s=0.025)
     if resp[0] != 0xA1:
         raise RuntimeError(f"Unexpected FW version response status: 0x{resp[0]:02X} ({resp[:16].hex()})")
     return (resp[6], resp[7], resp[8], resp[9]), (resp[10] << 8) | resp[11]
+
+
+def query_receiver_link_state(dev: CompxHidDevice) -> int:
+    """Read-only receiver-local link state query (0x00, 0x89) on 258a:2031: 1 = linked, 0 = unlinked."""
+    req = bytearray(64)
+    req[5] = 0x89
+    resp = dev.command(bytes(req), delay_s=0.010)
+    if resp[0] != 0xA1:
+        raise RuntimeError(f"Unexpected link state response status: 0x{resp[0]:02X} ({resp[:16].hex()})")
+    return resp[6]
 
 
 def _send_reset_command(dev: CompxHidDevice, req: bytes, what: str) -> None:
@@ -383,41 +415,57 @@ def wait_for_device(vid: int, pid: int, timeout_s: float = 10.0):
     raise TimeoutError(f"Timed out waiting for USB HID device {vid:04x}:{pid:04x}")
 
 
-def enter_bootloader():
-    """Return the bootloader node, switching an attached app-mode mouse into the bootloader."""
-    bl_node = transport.find(VID_SINOWEALTH, PID_MOUSE_BL)
+def _target_cfg(args) -> tuple[str, dict]:
+    name = getattr(args, "target", "mouse") or "mouse"
+    return name, TARGETS[name]
+
+
+def enter_bootloader(target: str = "mouse", allow_receiver_bl: bool = False):
+    """Return the bootloader node, switching an attached app-mode device into its bootloader."""
+    cfg = TARGETS[target]
+    app_pid, bl_pid = cfg["app_pid"], cfg["bl_pid"]
+    bl_node = transport.find(VID_SINOWEALTH, bl_pid)
     if bl_node:
         return bl_node
-    app_node = transport.find(VID_SINOWEALTH, PID_MOUSE_APP)
+    app_node = transport.find(VID_SINOWEALTH, app_pid)
     if not app_node:
-        raise RuntimeError("Neither 258a:2018 (app) nor 258a:2103 (bootloader) found")
+        raise RuntimeError(
+            f"Neither {VID_SINOWEALTH:04x}:{app_pid:04x} (app) nor {VID_SINOWEALTH:04x}:{bl_pid:04x} (bootloader) found"
+        )
+    if target == "receiver" and not allow_receiver_bl:
+        raise RuntimeError(
+            f"Refusing to switch receiver ({VID_SINOWEALTH:04x}:{app_pid:04x}) into untested bootloader "
+            f"{VID_SINOWEALTH:04x}:{bl_pid:04x} without --allow-receiver-bl (receiver has no physical recovery chord)"
+        )
     with CompxHidDevice(app_node) as dev:
         ver, pid = query_app_fw_version(dev)
         print(f"[ENTER] FW v{ver[0]}.{ver[1]}.{ver[2]}.{ver[3]} (PID=0x{pid:04X}) at {app_node}; sending SetBLDeviceMode")
         enter_bootloader_from_app(dev)
     try:
-        return wait_for_device(VID_SINOWEALTH, PID_MOUSE_BL, timeout_s=10.0)
+        return wait_for_device(VID_SINOWEALTH, bl_pid, timeout_s=10.0)
     except TimeoutError:
-        listed = transport.hid.enumerate(VID_SINOWEALTH, PID_MOUSE_BL) if isinstance(transport, HidapiTransport) else []
+        listed = transport.hid.enumerate(VID_SINOWEALTH, bl_pid) if isinstance(transport, HidapiTransport) else []
         if listed:  # it did re-enumerate; find() wants usage 0xFFFF/0x00, which this bootloader did not list
             usages = ", ".join(sorted({f"0x{d['usage_page']:04X}/0x{d['usage']:02X}" for d in listed}))
+            end_hex = f"0x{cfg['app_base'] + BLOCK:x}"
             raise RuntimeError(
-                "The mouse is in its bootloader (258a:2103), but hidapi lists no collection with Usage Page 0xFFFF, "
-                f"Usage 0x00 that opens (listed: {usages}). Nothing was written. To return to the application, run "
-                "`compx_usb_flasher.py dump --out exit.hex --end 0x6020` on Linux (default hidraw backend), and "
-                "report the usages above in an issue."
+                f"The {cfg['label'].lower()} is in its bootloader ({VID_SINOWEALTH:04x}:{bl_pid:04x}), but hidapi "
+                f"lists no collection with Usage Page 0xFFFF, Usage 0x00 that opens (listed: {usages}). Nothing was "
+                f"written. To return to the application, run `compx_usb_flasher.py --target {target} dump --out "
+                f"exit.hex --end {end_hex}` on Linux (default hidraw backend), and report the usages above in an issue."
             ) from None
         raise RuntimeError(
-            "Mouse did not re-enumerate as 258a:2103. Enter the "
+            f"{cfg['label']} did not re-enumerate as {VID_SINOWEALTH:04x}:{bl_pid:04x}. Enter the "
             "bootloader with the official updater, then run this command again."
         ) from None
 
 
-def read_back(bl: CompxHidDevice, image: bytes, start: int = 0, label: str = "Verified") -> int | None:
+def read_back(bl: CompxHidDevice, image: bytes, start: int = 0, label: str = "Verified",
+              app_base: int = APP_BASE_ADDR) -> int | None:
     """Compare flash with image[start:] block by block; return the first mismatching offset or None."""
     for offset in range(start, len(image), BLOCK):
         expected = image[offset : offset + BLOCK]
-        if bl_read_32(bl, APP_BASE_ADDR + offset, len(expected)) != expected:
+        if bl_read_32(bl, app_base + offset, len(expected)) != expected:
             return offset
         done = offset + len(expected)
         if done % 16384 == 0 or done == len(image):
@@ -425,53 +473,67 @@ def read_back(bl: CompxHidDevice, image: bytes, start: int = 0, label: str = "Ve
     return None
 
 
-def load_image(hex_path: str) -> bytes:
-    image, _sla, _records = compx_hex_tool.load_app_hex(Path(hex_path), APP_BASE_ADDR)
+def load_image(hex_path: str, app_base: int = APP_BASE_ADDR) -> bytes:
+    image, _sla, _records = compx_hex_tool.load_app_hex(Path(hex_path), app_base)
     return image
 
 
-def cmd_probe(_args) -> int:
-    app_node = transport.find(VID_SINOWEALTH, PID_MOUSE_APP)
-    bl_node = transport.find(VID_SINOWEALTH, PID_MOUSE_BL)
+def cmd_probe(args) -> int:
+    target, cfg = _target_cfg(args)
+    app_pid, bl_pid = cfg["app_pid"], cfg["bl_pid"]
+    app_node = transport.find(VID_SINOWEALTH, app_pid)
+    bl_node = transport.find(VID_SINOWEALTH, bl_pid)
     if app_node:
-        print(f"[PROBE] Wired mouse application ({VID_SINOWEALTH:04x}:{PID_MOUSE_APP:04x}) at {app_node}")
+        print(f"[PROBE] {cfg['label']} application ({VID_SINOWEALTH:04x}:{app_pid:04x}) at {app_node}")
         with CompxHidDevice(app_node) as dev:
             ver, pid = query_app_fw_version(dev)
             print(f"        Firmware Version: v{ver[0]}.{ver[1]}.{ver[2]}.{ver[3]} (PID=0x{pid:04X})")
+            if target == "receiver":
+                linked = query_receiver_link_state(dev)
+                print(f"        Mouse Link State (0x89): {'linked (1)' if linked else 'unlinked (0)'}")
     elif bl_node:
-        print(f"[PROBE] Wired mouse bootloader ({VID_SINOWEALTH:04x}:{PID_MOUSE_BL:04x}) at {bl_node}")
+        print(f"[PROBE] {cfg['label']} bootloader ({VID_SINOWEALTH:04x}:{bl_pid:04x}) at {bl_node}")
         with CompxHidDevice(bl_node) as bl:
             print(f"        Bootloader Version Bytes: {bl_get_version(bl).hex()}")
     else:
-        print("[ERROR] Neither 258a:2018 (App) nor 258a:2103 (Bootloader) found on USB.")
+        print(f"[ERROR] Neither {VID_SINOWEALTH:04x}:{app_pid:04x} (App) nor {VID_SINOWEALTH:04x}:{bl_pid:04x} "
+              "(Bootloader) found on USB.")
         return 1
     return 0
 
 
 def cmd_verify_bl(args) -> int:
-    image = load_image(args.reference_hex)
-    end = APP_BASE_ADDR + len(image)
-    bl_node = enter_bootloader()
+    target, cfg = _target_cfg(args)
+    app_base, app_pid, bl_pid = cfg["app_base"], cfg["app_pid"], cfg["bl_pid"]
+    image = load_image(args.reference_hex, app_base)
+    end = app_base + len(image)
+    bl_node = enter_bootloader(target, allow_receiver_bl=getattr(args, "allow_receiver_bl", False))
     print(f"[VERIFY] Bootloader at {bl_node}")
     with CompxHidDevice(bl_node) as bl:
         print(f"         GetBLFW: {bl_get_version(bl).hex()}")
-        print(f"         Reading back 0x{APP_BASE_ADDR:08X}..0x{end - 1:08X} ({len(image)} bytes)...")
-        bad = read_back(bl, image, label="Matched")
+        print(f"         Reading back 0x{app_base:08X}..0x{end - 1:08X} ({len(image)} bytes)...")
+        bad = read_back(bl, image, label="Matched", app_base=app_base)
         if bad is not None:
-            print(f"[MISMATCH] at 0x{APP_BASE_ADDR + bad:08X}; staying in bootloader (258a:2103).")
+            print(f"[MISMATCH] at 0x{app_base + bad:08X}; staying in bootloader ({VID_SINOWEALTH:04x}:{bl_pid:04x}).")
             return 1
-        print(f"[MATCH] 0x{APP_BASE_ADDR:08X}..0x{end - 1:08X} ({len(image)} bytes) equals {args.reference_hex}")
+        print(f"[MATCH] 0x{app_base:08X}..0x{end - 1:08X} ({len(image)} bytes) equals {args.reference_hex}")
         if args.stay_in_bl:
             return 0
         print("         Sending Exit (0x04, mode=0x01)...")
         bl_exit_to_app(bl)
-    app_node = wait_for_device(VID_SINOWEALTH, PID_MOUSE_APP, timeout_s=10.0)
-    print(f"[VERIFY] Mouse back in application mode at {app_node}")
+    app_node = wait_for_device(VID_SINOWEALTH, app_pid, timeout_s=10.0)
+    print(f"[VERIFY] {cfg['label']} back in application mode at {app_node}")
     return 0
 
 
 def cmd_flash(args) -> int:
-    image = load_image(args.firmware_hex)
+    target, _cfg = _target_cfg(args)
+    if target != "mouse":
+        raise RuntimeError(
+            "Refusing to flash receiver: receiver bootloader (258a:2113) Erase extent and bank offset have not "
+            "been verified on hardware yet (no tool here flashes the receiver)"
+        )
+    image = load_image(args.firmware_hex, APP_BASE_ADDR)
     image += b"\xFF" * (-len(image) % BLOCK)
     audit = compx_hex_tool.audit_binary_safety(image, base_addr=APP_BASE_ADDR)
     if not audit["all_passed"]:
@@ -483,7 +545,7 @@ def cmd_flash(args) -> int:
                            "bootloader stores it at +0x47800, where it would overwrite the settings pages")
     print(f"[AUDIT] {Path(args.firmware_hex).name}: {len(image)} bytes, SHA256={audit['sha256'][:16]}..., all checks passed")
 
-    bl_node = enter_bootloader()
+    bl_node = enter_bootloader("mouse")
     print(f"[FLASH] Bootloader at {bl_node}")
     with CompxHidDevice(bl_node) as bl:
         blfw = bl_get_version(bl)
@@ -522,13 +584,17 @@ def cmd_flash(args) -> int:
 
 def cmd_dump(args) -> int:
     """Read-only backup: read flash through VerifyByAddress into an Intel HEX file."""
-    start, end, out = args.start, args.end, Path(args.out)
-    if start < APP_BASE_ADDR or start % BLOCK or not start < end <= FLASH_END:
-        raise ValueError(f"need 0x{APP_BASE_ADDR:X} <= start < end <= 0x{FLASH_END:X}, start 32-byte aligned")
+    target, cfg = _target_cfg(args)
+    app_base, flash_end, app_pid = cfg["app_base"], cfg["flash_end"], cfg["app_pid"]
+    start = app_base if args.start is None else args.start
+    end = flash_end if args.end is None else args.end
+    out = Path(args.out)
+    if start < app_base or start % BLOCK or not start < end <= flash_end:
+        raise ValueError(f"need 0x{app_base:X} <= start < end <= 0x{flash_end:X}, start 32-byte aligned")
     if out.exists():
         raise ValueError(f"{out} exists; refusing to overwrite a backup")
     data = bytearray()
-    bl_node = enter_bootloader()
+    bl_node = enter_bootloader(target, allow_receiver_bl=getattr(args, "allow_receiver_bl", False))
     with CompxHidDevice(bl_node) as bl:
         print(f"[DUMP] Bootloader at {bl_node}, GetBLFW: {bl_get_version(bl).hex()}")
         for addr in range(start, end, BLOCK):
@@ -540,7 +606,7 @@ def cmd_dump(args) -> int:
             if (addr + BLOCK - start) % 0x10000 == 0:
                 print(f"       read up to 0x{addr + BLOCK:08X}")
         text = compx_hex_tool.encode_compx_hex(bytes(data), base_addr=start)
-        if start != APP_BASE_ADDR:  # no vector table here: drop the derived start address
+        if start != app_base:  # no vector table here: drop the derived start address
             text = "".join(line for line in text.splitlines(True) if not line.startswith(":04000005"))
         out.write_text(text)
         used = [start + o for o in range(0, len(data), 0x1000) if data[o : o + 0x1000].strip(b"\xFF")]
@@ -551,8 +617,8 @@ def cmd_dump(args) -> int:
             return 0
         print("         Sending Exit (0x04, mode=0x01)...")
         bl_exit_to_app(bl)
-    app_node = wait_for_device(VID_SINOWEALTH, PID_MOUSE_APP, timeout_s=10.0)
-    print(f"[DUMP] Mouse back in application mode at {app_node}")
+    app_node = wait_for_device(VID_SINOWEALTH, app_pid, timeout_s=10.0)
+    print(f"[DUMP] {cfg['label']} back in application mode at {app_node}")
     return 0
 
 
@@ -562,18 +628,24 @@ def main() -> int:
     linux = sys.platform.startswith("linux")
     parser.add_argument("--backend", choices=("hidraw", "hidapi") if linux else ("hidapi",),
                         default="hidraw" if linux else "hidapi", help="USB HID access (default: %(default)s)")
+    parser.add_argument("--target", choices=TARGETS, default="mouse",
+                        help="mouse (258a:2018/2103, base 0x6000) or receiver (258a:2031/2113, read-only)")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("probe", help="Read-only probe of the connected mouse")
+    sub.add_parser("probe", help="Read-only probe of the connected device")
     p = sub.add_parser("verify-bl", help="Enter bootloader, read back and compare the full reference image")
-    p.add_argument("--reference-hex", required=True, help="Reference Intel HEX (lowest address 0x6000)")
+    p.add_argument("--reference-hex", required=True, help="Reference Intel HEX (lowest address = app base)")
     p.add_argument("--stay-in-bl", action="store_true", help="Do not send Exit even on a full match")
-    p = sub.add_parser("flash", help="Program and verify an Intel HEX image (0x6000 up to at most 0x36800)")
+    p.add_argument("--allow-receiver-bl", action="store_true",
+                   help="Required to switch receiver 258a:2031 into untested bootloader 258a:2113")
+    p = sub.add_parser("flash", help="Program and verify a mouse Intel HEX image (0x6000 up to at most 0x36800)")
     p.add_argument("--firmware-hex", required=True, help="Intel HEX to flash, e.g. the vendor .hex for rollback")
-    p = sub.add_parser("dump", help="Read-only backup of flash (default 0x6000..0xFFFFF) to an Intel HEX file")
+    p = sub.add_parser("dump", help="Read-only backup of flash (default app base..flash end) to an Intel HEX file")
     p.add_argument("--out", required=True, help="Output .hex (never overwritten)")
-    p.add_argument("--start", type=lambda s: int(s, 0), default=APP_BASE_ADDR)
-    p.add_argument("--end", type=lambda s: int(s, 0), default=FLASH_END, help="Exclusive end address")
+    p.add_argument("--start", type=lambda s: int(s, 0), default=None)
+    p.add_argument("--end", type=lambda s: int(s, 0), default=None, help="Exclusive end address")
     p.add_argument("--stay-in-bl", action="store_true", help="Do not send Exit afterwards")
+    p.add_argument("--allow-receiver-bl", action="store_true",
+                   help="Required to switch receiver 258a:2031 into untested bootloader 258a:2113")
     args = parser.parse_args()
     if args.backend == "hidapi":
         transport = HidapiTransport(hidapi_module())

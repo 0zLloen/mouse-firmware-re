@@ -2,7 +2,7 @@
 
 How the Glorious Series One Pro Wireless mouse and its receiver `258a:2031` talk over 2.4 GHz: radio settings, addressing and pairing, link layer, every packet and record, and what open firmware on the mouse would need to talk to the **unchanged** stock receiver.
 
-**Sources.** Two official images, `CM2856_Mouse_USB_v1.00.00_20220810.hex` (mouse, nRF52840, app at `0x6000`) and `CM2856_Receiver_USB_v1.00.00_20220810.hex` (receiver, app at `0x7000`). Addresses below are load addresses in those files, marked *M* (mouse) or *R* (receiver). Nothing in this document was observed on hardware.
+**Sources.** Two official images, `CM2856_Mouse_USB_v1.00.00_20220810.hex` (mouse, nRF52840, app at `0x6000`) and `CM2856_Receiver_USB_v1.00.00_20220810.hex` (receiver, app at `0x7000`). Addresses below are load addresses in those files, marked *M* (mouse) or *R* (receiver). Hardware checks done on a retail unit (pairing ID `0x8A`, downlink wrap bug, link-drop timing) are marked **Verified** with their dates; everything on-air remains uncaptured.
 
 **Why it is under `platforms/`.** Both images contain the same radio library: the same init routine (*M* `0x15A1C`, *R* `0xCA40`), the same 13-state machine with both roles in each image, the same RF test mode, and the same placeholder-style constants (`0x01234567`, prefixes `B0`..`B7`, a fixed hop table). That looks like a generic Compx library. Only this one mouse/receiver pair has been examined, though. The record types and the USB mapping in section 5 belong to the Series One Pro.
 
@@ -14,7 +14,7 @@ How the Glorious Series One Pro Wireless mouse and its receiver `258a:2031` talk
 
 **Notation.** `C[x]` is the byte (or word) at offset `x` of the mouse's radio state block `0x2000361C` (*M* `0x15A20`); `R[x]` the same for the receiver's radio state block `0x20000050` (*R* `0xCA44`). Neither is a config struct.
 
-**Contents:** [1. Summary](#1-summary-for-implementers) · [2. PHY](#2-phy) · [3. Addressing, pairing, connect](#3-addressing-pairing-and-connect) · [4. Link layer](#4-link-layer) · [5. Records](#5-packets-and-records) · [6. Validation](#6-validation) · [7. Open firmware](#7-what-open-mouse-firmware-needs) · [8. Hardware checks](#8-hardware-checks-for-later-not-done)
+**Contents:** [1. Summary](#1-summary-for-implementers) · [2. PHY](#2-phy) · [3. Addressing, pairing, connect](#3-addressing-pairing-and-connect) · [4. Link layer](#4-link-layer) · [5. Records](#5-packets-and-records) · [6. Validation](#6-validation) · [7. Open firmware](#7-what-open-mouse-firmware-needs) · [8. Hardware checks](#8-hardware-checks)
 
 ---
 
@@ -141,12 +141,12 @@ So an ESB library cannot talk to this receiver. Raw RADIO access with the regist
   - The receiver's pairing flag (`0x20000063`) is read at *R* `0x7826` and `0xCDFC`, and only ever written with 0.
   - Its learn path is therefore dead. It would store the 4 ID bytes of a connect request as the RF ID: *R* `0xCDFC`–`0xCE22`.
   - The RF ID changes only through receiver-local command **`0x0A`** (*R* `0xC7EE`), `body[6..9]` little-endian. It is saved to `0x38000` on the next main-loop pass. It is loaded into `BASE1` at the next radio init (receiver replug), or after the receiver's next connect answer (*R* `0xCE74`). Until then the old link keeps running.
-- **Re-pairing with stock tools** (**Inferred**, never run):
-  1. read the mouse's ID over the cable with mouse command **`0x8A`** (group 0, *M* `0x14986`, returns `DEVICEID[0]`);
-  2. write it to the receiver with `0x0A`;
-  3. replug the receiver.
+- **Re-pairing with stock tools** (**Verified** in CIL of `GloriousPairingUtility.exe`, 2026-11-26; SHA-256 `f10cce6fcb132a7fccf2dd4470e59b70a4e0b3667dfb87da67b5452590482944`, inside `GloriousPairingUtility.zip`, SHA-256 `a5f0b796bbdd18df42e67e90495a46d98bd3a5451ea8544458c28c077c59a99c`; never run against hardware here):
+  1. read the mouse's ID over the cable with mouse command **`0x8A`** (`body[3]=0x04, body[5]=0x8A`, group 0, *M* `0x14986`, returns `DEVICEID[0]`; `GloriousPairingUtility` method `GetRFAddress`);
+  2. write those 4 bytes to the receiver with **`0x0A`** (`body[3]=0x04, body[5]=0x0A, body[6..9]=id`; `picPair_Click`);
+  3. replug the receiver (or let it answer a connect request).
 
-  Who does this in the factory, or in Glorious Core, is **Unknown**.
+  `GloriousPairingUtility.exe`'s bundled `Config.ini` explicitly lists `[Series One PRO Wireless]` (`258a:2018` / `258a:2031`) and `[Model Golden Dongle]` (`258a:2032`, entry 3 = Series One PRO Wireless). On hardware (2026-11-26, **Verified**), receiver-local `0x8A` (`4.0 ms`), relayed mouse `0x8A` (`8.0 ms`) and the unit's `FICR DEVICEID[0]` dump all returned the same 4 bytes.
 - **Mouse "pairing mode"** (*M* `0x1349C`) is reachable only from a button with action type `0xF0` (no factory button has one). It sets `BASE1 = 0x89ABCDEF` for up to 30 s (*M* `0x6C46`–`0x6C84`: the `TIMER1` 1 ms tick counts `C[0x28]` to 30000, then restores `BASE1`). The entry is the button-action dispatcher (*M* `0xA4D8` compares the action with `0xF0`, then `bl 0x1349C` at `0xA504`). The stock receiver never listens on that address, so with it the mode only takes the mouse offline. **Inferred**
 - Config page `0x38000` layout (*R* `0x97BC` load, `0xC6FC` save; **Inferred**):
 
@@ -202,7 +202,11 @@ By the code, the two sides start the hop sequence about 2.6 ms apart (**Inferred
 
 - **With answer 1 lost** the mouse takes answer 4. That is the next one on its channel, 1.5 ms later, and puts the two sides close enough to meet on channel 1. In the two phases that needed a second connect, the first one left a half-link: at 20.4 ms the receiver's link flag was up from 86.4 ms, but the mouse never got an ACK, gave up, and searched again.
 - **An artifact found and removed.** An earlier version of the emulation started USB SOFs before the receiver's radio init. That left `R[0xB]` = 1 and let 1 phase in 10 link without a lost answer.
-- **The contradiction.** The real pair does link; this is **Verified** on a retail unit in the device docs. So either the mouse misses answer 1 on hardware for a reason the model lacks (radio ramp-up, the receiver's interrupt latency, or RF loss), or the race is resolved by something not yet found in the code. **Unknown**, and a hardware check (section 8).
+- **Hardware check (Verified, 2026-11-26, 9 off→on power cycles in 45 s, polling `0x89` every 2 ms alongside interface 1 notifications):** the race happens on real hardware too — cold connects regularly fail 1 or 2 attempts before linking, and hit the half-link predicted above:
+  - **Failed connects while already unlinked (`0x89 == 0`)**: in 4 of the power cycles the receiver emitted link-loss `03 00 …` + `04 06 00` while `0x89` was already `0` (receiver entered state 10 after answering, hopped 256 ms without hearing the mouse, and timed out), followed 49–65 ms later by a clean link (`0x89: 0 → 1` and `04 06 01` within 5 ms). One cycle had **two failed connects in a row** (`04 06 00` at `40.370 s` and `40.699 s`, 329 ms apart, then clean link at `40.748 s`).
+  - **Half-link observed**: on another cycle, after a failed connect (`21.841 s`), `0x89` rose `0 → 1` at `21.920 s` with **no** `04 06 01` from the mouse, fell back `1 → 0` (`04 06 00`) 462 ms later (`22.382 s`), and linked cleanly 56 ms later (`22.438 s`, `04 06 01` 5 ms later).
+  - **Delayed `04 06 01` on direct cold connects**: on the 4 cycles that did not log a prior `04 06 00`, `0x89` rose `0 → 1` first and `04 06 01` arrived 215–257 ms later (`11.172 → 11.429 s`, `16.051 → 16.266 s`, `18.728 → 18.943 s`, `43.944 → 44.186 s`), against 5 ms on the immediate retries.
+  - Which of the 6 connect answers the mouse follows when a connect does succeed remains **Unknown** until sniffed on air (section 8).
 - **For open firmware** this does not matter if it stays on hop channel 0 until the first ACK (section 7).
 
 ### 3.4 States
@@ -260,14 +264,15 @@ The mouse builds its packet at *M* `0x18936`–`0x1897A`. The receiver checks it
 - The mouse stores the ACK payload only if `LENGTH ≥ 3` and `b2 & 0x3F == C[8]`. Then `C[8] = (C[8] + 1) % 63`, and its next uplink reports the new `C[8]`.
 - The receiver pops its head when uplink `b2 & 0x3F == R[8] + 1`. Otherwise it sets `R[8] = b2 & 0x3F` and resends the head.
 
-**Duplicate at the wrap.** **Inferred**, **Verified (emulation)** with 40 relayed queries in a row.
+**Duplicate at the wrap.** **Inferred**, **Verified (emulation)** with 40 relayed queries in a row, and **Verified (hardware, 2026-11-26)**.
 - With `R[8] = 62`, the mouse answers 0. Since `0 != 63`, the receiver neither pops nor counts on: it sets `R[8] = 0` and sends the same record again as sequence 0, and the mouse accepts it a second time.
 - In `compx_coemu.py --queries 40`, chunk 0 of a request came at 730.9 ms with sequence 62 and again at 731.9 ms with sequence 0, and the mouse accepted both. Every one of the 40 queries still got the right answer.
-- After the first wrap, one record in every 62 distinct downlink records arrives twice. What the duplicate does (**Inferred**, *M* `0x133E0`–`0x133FE`, `0x151FA`):
+- After the first wrap, one record in every 62 distinct downlink records arrives twice. What the duplicate does (**Inferred**, *M* `0x133E0`–`0x133FE`, `0x151FA`; **Verified** on hardware for the last-chunk case, 2026-11-26):
   - a duplicated chunk that is not the last one of its request: nothing;
   - a duplicated single-chunk request (`body[3] + 6 ≤ 8`): it runs twice;
-  - a duplicated **last chunk of a multi-chunk request**: the mouse zeroes its staging area after each completed request, so the duplicate completes a request whose bytes 0..7 are zero. Unless the real one is still pending (then it is dropped), the mouse runs group 0, command `0x00` ("set mode" 0, which resets the MCU if the mode byte `0x20003002` is `0xA0`), and that reply replaces the real one in the receiver's host buffer. The original request runs only once.
-  - With 2-chunk requests, as in the emulation, the duplicate is always a first chunk.
+  - a duplicated **last chunk of a multi-chunk request**: the mouse zeroes its staging area after each completed request, so the duplicate completes a request whose bytes 0..7 are zero. Unless the real one is still pending (then it is dropped), the mouse runs group 0, command `0x00` ("set mode" 0, a no-op returning `0xA1` unless the mode byte `0x20003002` is `0xA0`, in which case it resets the MCU), and that reply replaces the real one in the receiver's host buffer. The original request runs only once.
+  - With 2-chunk requests starting from sequence 0, as in the emulation, the duplicate is always a first chunk.
+- **Hardware check (Verified, 2026-11-26):** 40 back-to-back 2-chunk `0x81` version queries all returned `a1 00 02 03 00 81 01 00 00 00 20 18` (40/40 OK). After sending one 1-chunk `0x83` battery query (`body[3]=0x02`) to flip parity, 70 back-to-back 2-chunk `0x81` queries hit the wrap bug at iterations 30 and 61 — exactly 31 queries = **62 distinct downlink chunks apart** — returning `a1 00 00 00 00 00 00 00 00 00 20 18` (the 8-byte bogus zeroed-request reply `a1 00 00 00 00 00 00 00` plus 4 stale tail bytes from the previous reply in `0x200001EC`).
 
 **Mouse-side cancel.** A downlink type-7 record of length 1 with a value ≥ `0x39` cancels a pending reply and resets `C[8]` to 0 (*M* `0x13334`; `hardware.md` 2.3). The stock receiver never sends one.
 
@@ -499,28 +504,28 @@ To impersonate the stock mouse on an nRF52840 against the unchanged receiver. **
 - the exact on-air bits: bit order and, because of erratum 245, the CRC (it only matters for non-nRF tools);
 - real ramp-up, interrupt latency and SOF jitter;
 - how tolerant the receiver is of a packet that starts within its first 70 µs;
-- whether the receiver behaves differently on a suspended bus beyond the sleep record and the `TIMER1` frame;
-- what the factory tool writes with `0x0A`;
-- the BLE path in the mouse (`0x20003003 == 2`), which was not examined.
+- whether the receiver behaves differently on a suspended bus beyond the sleep record and the `TIMER1` frame.
+
+*(Settled 2026-11-26: the BLE path `0x20003003 == 2` is dead leftover code from a shared Compx tri-mode SDK template — `Driver\app_ble.c`, `nrf_sdh*.c`, SoftDevice `svc` calls `0x10..0xB5`. Full disassembly scan of `0x20003000..0x20003003` confirms nothing in the mouse image ever writes `2` to `0x20003003` — only `1` at `0xE880`/`0x19B78` and `0` at `0x9A66` — and there is no SoftDevice in flash; `0x0`–`0x5FFF` is the Compx bootloader. What writes `0x0A` is `GloriousPairingUtility.exe`, section 3.1.)*
 
 ---
 
-## 8. Hardware checks for later (not done)
+## 8. Hardware checks
 
-None of these has been run. Each needs the owner's go-ahead.
+Checks run on a retail unit are marked **Verified**; the rest have not been run and need the owner's go-ahead.
 
-1. **Pairing model** (read-only): read the mouse's `0x8A` over the cable and the receiver's local `0x8A`. Expect the same 4 bytes.
+1. **Pairing model (`0x8A`)** (read-only): **Verified (2026-11-26)**. Receiver-local `0x8A` (`4.0 ms`, `0xA1`), relayed mouse `0x8A` (`8.0 ms`, `0xA1`), and `FICR DEVICEID[0]` from the unit dump all returned the exact same 4 bytes.
 2. **Sniff with an nRF52840 dongle** set up from 2.1:
    - `BASE1` = that ID, prefix `0xB1`, RX on the hop channels of 2.3, or on 2403/2449/2478 while the mouse searches.
    - Expect keep-alives `02 xx yy` every 1 ms and ACKs about 70 µs after each.
    - Expect the connect exchange of 3.2, and the timing bits of 4.5.
 3. **Still-mouse link loss (4.5):**
-   - done on one host (2026-11-17): the receiver's link flag (`0x89`), polled every 3 ms while the mouse was still, dropped for `40.0 ms` every ~`0.5`–`1.8 s`. While moving it almost never dropped (3 drops in 98.5 s against 233 in 195.4 s still, 2026-11-18, `rx_link_watch.py`). While only scrolling it did not drop (63.3 s). Still to do: the same on a second host (poll every few ms; a 1 s poll misses a 40 ms drop);
-   - with the sniffer, watch the keep-alive's position against SOF (timing bits `00` creeping earlier).
+   - **Verified on two hosts:** on the first host (2026-11-17/18, `rx_link_watch.py`), `0x89` polled every 3 ms dropped for `40.0 ms` (median 32 ms) every ~`0.5`–`1.8 s` while still (233 drops in 195.4 s), almost never while moving (3 in 98.5 s), and never while steadily scrolling (63.3 s). On a second host with the same mouse and receiver (2026-11-19): **0 drops** in 60 s still and 0 drops in 60 s of use ([`receiver.md`](../../devices/glorious-series-one-pro/receiver.md) section 3).
+   - Still to do: with the sniffer, watch the keep-alive's position against SOF (timing bits `00` creeping earlier).
    - Prediction: drops only while still, and only where the mouse's clock is fast relative to that host's SOF.
-4. **Downlink wrap (4.3):** send 40 read-only relayed version queries in a row and look for a wrong reply. With 2-chunk requests none is expected; a request whose duplicated chunk is its last one would return a bogus group-0 reply.
+4. **Downlink wrap (4.3):** **Verified (2026-11-26)**. 40× 2-chunk `0x81` queries passed 40/40; after flipping parity with one 1-chunk `0x83` battery query, 70 back-to-back 2-chunk `0x81` queries hit the wrap bug at iterations 30 and 61 (exactly 31 queries = 62 distinct downlink chunks apart), returning `a1 00 00 00 00 00 00 00 00 00 20 18` (bogus zeroed group-0 reply).
 5. **Connect race (3.3):**
-   - switch the mouse off and on and time until `0x89` reads `01`;
-   - with the sniffer on the 3 connect channels, see which answer (1st, 4th, …) the mouse follows, and when the first ACK comes.
+   - **Verified on hardware (2026-11-26):** 9 off→on power cycles polling `0x89` (2 ms) + interface 1 confirmed the race occurs on real hardware — failed connects (`04 06 00` emitted while `0x89 == 0`, including two in a row 329 ms apart before a clean link 49 ms later) and a half-link (`0x89: 0 → 1` with no `04 06 01`, dropping after 462 ms, then clean link 56 ms later);
+   - still to do with the sniffer on the 3 connect channels: see which answer (1st, 4th, …) the mouse follows when it does link, and when the first ACK comes.
 6. **Receiver MCU:** a PCB photo (`receiver.md` section 1). The image points to an nRF52820 (2.1).
 7. **Bits on air:** an SDR capture of a keep-alive, compared with `compx_radio.air_bits()`. It settles the bit order and the CRC under erratum 245 (2.2). Only a non-Nordic tool needs this.

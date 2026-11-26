@@ -11,7 +11,7 @@ Labels follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md#evidence-rules). Firmwar
 | Item | Value | Evidence |
 | :--- | :--- | :--- |
 | Application | `258a:2031`, bcdDevice `0x0100`, product `Series One PRO Wireless`; three HID interfaces with the same report descriptors as the wired mouse (91 / 163 / 20 bytes) | **Verified** (`lsusb -v` and sysfs, 2026-11-12/13) |
-| Bootloader | `258a:2113` | **Inferred** (`FirmwareUpdate.exe` constant and the wireless `Config.ini` `BLPID = 2113`; never seen on USB) |
+| Bootloader | `258a:2113` | **Inferred** (wireless `Config.ini` `BLPID = 2113` and `OldPID = 2113`; never seen on USB; `FirmwareUpdate.exe` is byte-identical to the mouse package and runs the exact same `C52840Dongle` command flow, 2026-11-26) |
 | Official image | `0x00007000`–`0x0000EE03` (32,260 B), 2,020 HEX records, initial SP `0x200026E0`, `Reset_Handler` `0x000074C1` | **Verified** (`compx_hex_tool.py decode --target receiver`, 2026-11-13; SP and `Reset_Handler` are the first two little-endian words of the decoded image) |
 | MCU | nRF52 series with USB. The updater calls it an nRF52840 (`C52840Dongle`, `Config.ini` `ChipName = 00052840`), but the image uses only 32 KB of RAM (stack top `0x200026E0`, magic word at `0x20007FFC`) and no flash above `0x38FFF`, which also fits a 256 KB / 32 KB part such as the nRF52820. The image was not built for an nRF52840: it names no peripheral the nRF52820 lacks, and it has none of the nRF52840 `SystemInit()` errata literals that the mouse image has at `0x6B8C`–`0x6BA0` (NFCT `0x4000568C`, TEMP `0x4000C520`, QSPI `0x40029640`), and no GPIO P1 (section 1.1). | **Inferred**: probably an nRF52820; a photo of the receiver PCB would settle it |
 
@@ -25,6 +25,9 @@ Labels follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md#evidence-rules). Firmwar
   - `2AXP2-DK22` ("Dongle Kit V2", 2405–2476 MHz) is a different board for other mice.
   - Nordic's 2021 press release on another Glorious mouse, the Model O Wireless, names an nRF52840 for the mouse and an nRF52820 for its receiver (<https://www.nordicsemi.com/Nordic-news/2021/10/Glorious-Model-O-Wireless-mouse-and-PC-uses-nRF52840-and-nRF52820>). It does not mention the Series One Pro.
   - No teardown, firmware analysis or protocol notes for `258a:2031` / `258a:2113` were found.
+
+- **Sibling Forge Pro receivers (Verified, 2026-11-26):** the official Model O Pro (`CM2852_Receiver_USB_v1.00.00_20220810.hex`, `258a:2027` / `BLPID 2110`) and Model D Pro (`CM2855_Receiver_USB_v1.00.00_20220810.hex`, `258a:2029` / `BLPID 2112`) receiver images both decode to `32,256 B` at `0x00007000`, are ~98.9 % byte-identical to the Series One Pro receiver image (`32,260 B`, differing in 358 bytes), and use the same `C52840Dongle` updater flow. `GloriousPairingUtility.exe`'s `Config.ini` also lists `[Model Golden Dongle]` (`258a:2032`) as supporting Series One Pro Wireless (`3 = Series One PRO Wireless`).
+- **Offline prep (`compx_usb_flasher.py --target receiver`):** `probe` works read-only against `258a:2031` (`0x81` version + `0x89` link state, Verified 2026-11-26); `flash` is refused until `258a:2113` is characterised; `dump` and `verify-bl` refuse to enter `258a:2113` without `--allow-receiver-bl`.
 
 ## 2. Request routing
 
@@ -77,8 +80,8 @@ All **Verified** on a retail receiver and mouse, 2026-11-13, unless marked:
 | :---: | :--- | :--- | :---: | :--- |
 | `0x81` | Version | Replies `body[3] = 0x04`, `body[6..11] = 01 00 00 00 20 31` (v1.0.0.0, PID `0x2031`) (`@ 0x0000C762`) | Yes | **Verified** reply, 2026-11-13 |
 | `0x89` | Link state | `body[6]` = `0x20000056`: `01` while the mouse is linked, `00` without a link (`@ 0x0000C7E6`). `body[5]` is kept and `body[0]` becomes `A1` (`@ 0x0000C9F6`). open-directional-dpi hosts send it before each relayed request. | Yes | **Verified** (`01` and `00`), 2026-11-13/17 |
-| `0x8A` | RF ID read | `body[6..9]` = config bytes `+2..+5` (`@ 0x0000C800`). Unit-specific: redact it in anything you publish. | Read-only | **Inferred** (not sent) |
-| `0x00` | Set mode | Mode in `body[6]`. `0xB0` stores `0xA55AA55A` at `0x20007FFC` (`@ 0x0000C7A8`) and resets (`0x00007AF0`, `AIRCR`): the receiver bootloader `258a:2113`. `0xC0` resets; `0xA0` copies 9 bytes into radio state (not traced). | **No** | **Inferred** (not sent) |
+| `0x8A` | RF ID read | `body[6..9]` = config bytes `+2..+5` (`@ 0x0000C800`). Unit-specific: redact it in anything you publish. | Read-only | **Verified** (2026-11-26): answered `0xA1` in `4.0 ms`, matching both relayed mouse `0x8A` (`8.0 ms`) and the unit's `FICR DEVICEID[0]` byte for byte |
+| `0x00` | Set mode | Mode in `body[6]`. `0xB0` stores `0xA55AA55A` at `0x20007FFC` (`@ 0x0000C7A8`) and resets (`0x00007AF0`, `AIRCR`): the receiver bootloader `258a:2113`. `0xA0` enters RF test mode (`radio_test`): copies 9 bytes (`body[7..15]`) to `0x2000027C` (`+0` selector, `+1` sub-mode `0..4`, `+2` `MODE`, `+3` `TXPOWER`, `+4` `FREQUENCY`/start, `+5` end, `+6` step), stops the normal radio and timers (`0xCBB4`, `0xDF48`, `0xDFB0`), calls `0xD190` when `body[7]` is `0`, `1` or `5`, skips USB SOF frame start (`0xE786`) and normal main-loop tasks (`0xA582`), and runs `0xDE68` in the main loop; any later `0x00` with mode `!= 0xA0` resets (`0xC78A → 0x7AF0`). `0xC0` resets (`0x7AF0`) when `body[7] == 0`, else no-op (`0xA1`). `0x00` is normal mode (no-op unless leaving `0xA0`). | **No** | **Inferred** (disassembly, 2026-11-26; not sent) |
 | `0x0A` | RF ID write | Stores `body[6..9]` at config `+2` and sets the save flag (`@ 0x0000C7EE`); the main loop then rewrites the config page (section 5). Unpairs the mouse. | **No** | **Inferred** (not sent) |
 | other | — | `0xA3`, the rest of the request echoed (`@ 0x0000C75C`). `0x83` (battery) is one of them. | Yes | **Verified** for `0x83`, 2026-11-13 |
 
@@ -94,5 +97,4 @@ The application-to-bootloader packet of the wired mouse (`body[3] = 0x01`, `body
 
 - The receiver bootloader (`258a:2113`): never seen enumerating; its `Erase` extent and address limits are untested.
 - The exact MCU part (section 1.1): probably an nRF52820; only the chip marking would settle it, and no photo of this receiver's board is public.
-- Mode values other than `0xB0` (`0xA0`, `0xC0`).
 - Why the link drops for `40.0 ms` (`0x89`: `01 → 00 → 01`) every ~`0.5`–`1.8 s` while the mouse is still on the first host, and never on a second host (section 3). Host clock drift fits; a radio sniffer would prove it.

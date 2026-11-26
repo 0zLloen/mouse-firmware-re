@@ -164,7 +164,7 @@ It clears both LEDs, then (emulated; values are R G B):
 | Sensor burst bit 3 set (`0x20003023`), 200 ms after it rises | 1 | Colour of the current DPI stage: 3 bytes at `P + 0x4A + 3 * stage index` (`0xB4CA`–`0xB500`) |
 | Factory-reset hold (`0x2000305E`) | 0 | `00 FF 00` toggled every 200 ms, written in the PWM handler over anything else (`0xA3DC`–`0xA402`) |
 
-- The meaning of sensor burst bit 3 is **Unknown** (lift status is the usual meaning in this sensor family).
+- Sensor burst bit 3 (`0x20003023`) means **lifted** (**Verified** on a retail mouse, 2026-11-19, section 0).
 - The charge animation enable `0x2000324E` is 1 after boot; host group 0 command `0x03` writes `body[6]` to it (`0x148EE`). It is not saved.
 - The battery display flag `0x20003250` is toggled by button action type `0x0C` and by a 3 s hold of the DPI button (section 3.1). No factory button has that action.
 - **Mode `0xA0`** (active effect byte `0x20004BF9 == 0xA0`): LED `i` shows `0x2000689E[3i..3i+2]` × brightness / 256, with brightness = config byte `0x200038D2 + [0x200035DE]` (index 0 when USB is not configured, 1 when it is; both factory `0xFF`). Every row above except the factory-reset blink is skipped. Emulated: colours `0A 14 1E` / `28 32 3C` at brightness `0x80` gave `05 0A 0F` / `14 19 1E`.
@@ -235,10 +235,10 @@ A chord returns without running the third button's own action and schedules a sa
 ### 3.1 Button events and layers
 
 - `0x14244(state, index)` is the only entry to the action dispatcher for physical inputs. `index` `0..5` are the GPIO buttons (scan `0x16B0C`), `6` and `7` the wheel. It reads the action at `0x20004B30 + 15 * index + 1 + 7 * layer` and calls `0xA450(r0 = f0, r1 = state, r2 = index, r3 = pointer to f2..f6)`.
-- The wheel is two virtual buttons: the quadrature decoder `0x16CB0` sends a press for index 6 or 7, and `0x1525C` sends the release 2 ticks later. So any action type can be bound to a wheel slot. Which direction is index 6 is **Unknown**.
+- The wheel is two virtual buttons: the quadrature decoder `0x16CB0` sends a press for index 6 or 7, and `0x1525C` sends the release 2 ticks later. So any action type can be bound to a wheel slot. **Inferred** from the factory button map (`0x1A414`, Verified on hardware 2026-11-17: slot 6 is `01 01 10` = wheel `+1`, slot 7 is `01 01 11` = wheel `-1`) and the test-mode quadrature counter (`0x16D26` / `0x16D0C`: index 6 increments `+1`, index 7 decrements `-1`): index 6 is scroll up (`+1`) and index 7 is scroll down (`-1`).
 - **Layer 1 is selected by a momentary shift action, type 9**: press sets `0x2000304E`, release clears it (`0xAA90`–`0xAA9E`). While it is set, a new press uses layer 1.
 - Masks at `0x20003058` (pressed in layer 1) and `0x2000305A` (pressed in layer 0) send each release to the layer its press used (`0x14252`–`0x14292`). Emulated: with Forward = type 9, Back pressed while Forward is held sent the layer-1 key, and it was released correctly after Forward was let go first.
-- Long hold (state 2) exists only for button index 5 (DPI), after 3,000 ticks. Its only effect: when the action is type 7 and no other button is down, it toggles the battery display flag `0x20003250` (`0xA814`–`0xA82A`; section 2.3). So holding the DPI button for 3 s should show the battery level on LED 0 (not tested).
+- Long hold (state 2) exists only for button index 5 (DPI), after 3,000 ticks. Its only effect: when the action is type 7 and no other button is down, it toggles the battery display flag `0x20003250` (`0xA814`–`0xA82A`; section 2.3). (**Verified** on a retail unit, 2026-11-19, section 0: `0x20003250` turned 1 at 3.09 s.)
 
 ### 3.2 Action format
 
@@ -249,7 +249,7 @@ A chord returns without running the third button's own action and schedules a sa
 | `0x00` | `0xA4CA` | none (disabled) | |
 | `0x01` | `0xA50A` | mouse button / wheel | `f2` = `1..5`: button. `f2` = `0x10` / `0x11`: wheel `+1` / `-1`, on press only |
 | `0x02` | `0xAAEA` | repeat ("fire") another action | `f2` nested type, `f3` nested `f2`, `f4` count (`0xFF` = while held), `f5..f6` period in ticks, big-endian |
-| `0x03` | `0xA4CA` | no handler | |
+| `0x03` | `0xA4CA` | no handler (same TBB entry `0x15` as type `0x00`, immediate return) | |
 | `0x04` | `0xA830` | keyboard key | `f2` modifier bits, `f3` key usage |
 | `0x05` | `0xA9DA` | consumer key | `f2..f3` 16-bit usage, big-endian |
 | `0x06` | `0xA9B6` | system control | `f2` = report byte (bit 0 power down, bit 1 sleep, bit 2 wake) |
@@ -278,7 +278,7 @@ Type 7 sub-functions (`f2`, jump table `0xA622`), on press unless noted:
 | 6 | `0xA758` | stage up with wrap (the factory DPI button) |
 | 7 | `0xA76E` | stage down with wrap |
 
-Every type 7 press also queues notification type 1 (stage + 1, DPI X, DPI Y big-endian; `0xA77A`–`0xA7A2`).
+Every type 7 press also queues notification type 1 (stage + 1, DPI X, DPI Y big-endian; `0xA77A`–`0xA7A2`). **Verified** on hardware over `258a:2031` (2026-11-26): holding a 400-DPI shift button on stage index 2 (1600 DPI) emitted `04 01 03 06 40 06 40 00 00` on interface 1 (report ID 4, type 1, stage 3, `0x0640` = 1600 from `0x20003068`).
 
 ### 3.3 How keys reach USB
 
@@ -319,7 +319,7 @@ Multi-byte fields are big-endian. `id` = `body[6..7]`. Failure is `0xA2`, an unk
 | `0x01` | `id`, `body[8..11]` size | create. An existing macro with that id is deleted first |
 | `0x81` | `id` | `body[8..11]` size; `0xA2` when the id does not exist |
 | `0x02` | `id` | delete |
-| `0x82` | | accepted, does nothing (`0x14A18`) |
+| `0x82` | | accepted, does nothing (`0x14A18 → 0x14A24`; empty stub like `0x00`, the unused set/get halves of `0x00`/`0x80` and `0x02`/`0x82`) |
 | `0x03` | `id`, `body[8..11]` offset, `body[12]` length, `body[13..]` data | write event bytes at `offset` (`0x1A23C`) |
 | `0x83` | `id`, `body[8..11]` offset, `body[12]` length | `body[13..]` data (`0x16250`) |
 
@@ -334,7 +334,7 @@ Multi-byte fields are big-endian. `id` = `body[6..7]`. Failure is `0xA2`, an unk
 
 ### 3.8 Macro playback
 
-- Runtime table: 20 records of 26 bytes at `0x20005473` (active, button index, mode 1 count / 2 hold / 3 toggle, plays left, id, delay countdown, position, pointers, size).
+- Runtime table: 20 records of 26 bytes at `0x20005473` (active, button index, mode 1 count / 2 hold / 3 toggle, plays left, id, delay countdown, position, pointers, size). The engine also checks mode 4 (`0xE38C`, `0xE3B0`: would decrement the counter once per *event* instead of per loop and stop), but it is unreachable dead code: the only caller of the runtime-table insert `0x16978` is `0xA92C`, which writes only modes 1, 2 or 3 (disassembly, 2026-11-26).
 - Engine `0xE32C`: called from the main loop (`0xE8FC`) when the `TIMER1` handler has incremented `0x2000306C`, so at most once per millisecond. Events are 5 ticks apart; a delay event of `N` makes the next event `5 + N` ticks later.
 - Hold mode stops on release and toggle mode on the second press; the engine then clears the macro keyboard image. A macro that ends in play-N mode does not release keys it left down.
 - A profile switch frees every record (`0x16A1C`) and clears the repeat records, both keyboard images and the button bytes (`0x18638`).
@@ -383,6 +383,5 @@ Event bytes (the first byte is the opcode; decode at `0xE3C6`–`0xE68E`):
 - What the write to address 0 (2.4) does on hardware. (The chord bug of 2.6 is Verified on a retail mouse.)
 - The intended look of the stored effects; their renderers are not in this image.
 - Whether Glorious Core writes macros in this event encoding and which opcodes it uses. Settle: a USB capture of the vendor software.
-- Real macro timing (the tick is 1 ms only while the main loop keeps up), and which wheel direction is index 6.
-- The purpose of group 4 command `0x82`, of macro runtime mode 4 and of action type 3.
+- Real macro timing (the tick is 1 ms only while the main loop keeps up).
 - What wakes the mouse after a 0 % power-off, and whether a mouse on a charger with no host stays on the radio.

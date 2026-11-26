@@ -105,19 +105,22 @@ class MockDevice:
     a flash.
     """
 
-    def __init__(self, mode="bl", old=b"", die_after=None, glitch_on=None, honor_entry=True, blfw=b"\xB0\x01\x00\x00"):
-        self.mode, self.flash = mode, bytearray(b"\xFF" * 0x100000)
-        self.flash[BASE : BASE + len(old)] = old
-        self.flash[BASE + fl.BANK_OFFSET : BASE + fl.BANK_OFFSET + len(old)] = old
+    def __init__(self, mode="bl", old=b"", die_after=None, glitch_on=None, honor_entry=True, blfw=b"\xB0\x01\x00\x00",
+                 app_pid=0x2018, bl_pid=0x2103, base=BASE, read_top=0x4D800, bank_offset=fl.BANK_OFFSET, flash_size=0x100000):
+        self.mode, self.flash = mode, bytearray(b"\xFF" * flash_size)
+        self.app_pid, self.bl_pid, self.base = app_pid, bl_pid, base
+        self.read_top, self.bank_offset = read_top, bank_offset
+        self.flash[base : base + len(old)] = old
+        self.flash[base + bank_offset : base + bank_offset + len(old)] = old
         self.page, self.buf, self.span = None, None, None  # pending page buffer, touched pages (lo, hi)
         self.die_after, self.glitch_on, self.honor_entry, self.blfw = die_after, glitch_on, honor_entry, blfw
         self.programs, self.ops, self.ioctls, self.resp, self.clock = [], [], 0, bytes(64), 0.0
 
     def node(self, _vid, pid):
-        return {("app", 0x2018): Path("/dev/mock-app"), ("bl", 0x2103): Path("/dev/mock-bl")}.get((self.mode, pid))
+        return {("app", self.app_pid): Path("/dev/mock-app"), ("bl", self.bl_pid): Path("/dev/mock-bl")}.get((self.mode, pid))
 
     def open(self, path, _flags):
-        if Path(path) not in (self.node(0, 0x2018), self.node(0, 0x2103)):
+        if Path(path) not in (self.node(0, self.app_pid), self.node(0, self.bl_pid)):
             raise FileNotFoundError(path)
         return 1000
 
@@ -146,7 +149,11 @@ class MockDevice:
                 raise OSError(errno.EPIPE, "reset")
             if f[5] == 0x81:
                 r = bytearray(64)
-                r[0], r[6:12] = 0xA1, bytes([1, 0, 0, 0, 0x20, 0x18])
+                r[0], r[6:12] = 0xA1, bytes([1, 0, 0, 0, self.app_pid >> 8, self.app_pid & 0xFF])
+                self.resp = bytes(r)
+            elif f[5] == 0x89 and self.app_pid == 0x2031:
+                r = bytearray(64)
+                r[0], r[5], r[6] = 0xA1, 0x89, 0x01
                 self.resp = bytes(r)
             return
         assert f[4] == 0xB0
@@ -160,14 +167,14 @@ class MockDevice:
             self.page = self.buf = None  # drops the page buffer; no flash changes
             self.ok()
         elif op in (0x02, 0x83):
-            if not 0x6000 <= addr < 0x4D800:  # verified on hardware: 0xA2 below 0x6000 and from 0x4D800 up
+            if not self.base <= addr < self.read_top:  # verified on hardware: 0xA2 below base and from read_top up
                 return self.ok(status=0xA2)
-            page = (addr + fl.BANK_OFFSET) & ~0xFFF
+            page = (addr + self.bank_offset) & ~0xFFF
             lo, hi = self.span or (addr >> 12, addr >> 12)
             self.span = (min(lo, addr >> 12), max(hi, addr >> 12))
             if op == 0x83:
                 self.flush()
-                return self.ok(bytes(b ^ 0x55 for b in self.flash[addr + fl.BANK_OFFSET : addr + fl.BANK_OFFSET + n]))
+                return self.ok(bytes(b ^ 0x55 for b in self.flash[addr + self.bank_offset : addr + self.bank_offset + n]))
             if self.die_after is not None and len(self.programs) == self.die_after:
                 self.mode = "gone"
                 raise OSError(errno.ENODEV, "unplugged")
@@ -176,15 +183,15 @@ class MockDevice:
                 self.flush()
                 self.page, self.buf = page, bytearray(self.flash[page : page + 0x1000])
             for i in range(n):
-                self.buf[(addr + fl.BANK_OFFSET - page) + i] = f[11 + i] ^ 0x55
+                self.buf[(addr + self.bank_offset - page) + i] = f[11 + i] ^ 0x55
             self.ok()
             if len(self.programs) == self.glitch_on:
                 raise OSError(errno.ETIMEDOUT, "status stage timeout")
         elif op == 0x04:
             self.flush()
             lo, hi = self.span or (0, 0x47)
-            size = min((hi - lo + 1) * 0x1000, fl.BANK_OFFSET)  # the bootloader copies from the bank start
-            self.flash[BASE : BASE + size] = self.flash[BASE + fl.BANK_OFFSET : BASE + fl.BANK_OFFSET + size]
+            size = min((hi - lo + 1) * 0x1000, self.bank_offset or (self.read_top - self.base))
+            self.flash[self.base : self.base + size] = self.flash[self.base + self.bank_offset : self.base + self.bank_offset + size]
             self.mode = "app"
             raise OSError(errno.EPIPE, "reset")
 
@@ -223,7 +230,7 @@ class FakeHid:
         return f"{self.m.mode}-if{interface}-{usage_page:04x}-{usage:02x}".encode()
 
     def enumerate(self, vid=0, pid=0):
-        if (vid, pid) != (0x258A, {"app": 0x2018, "bl": 0x2103}.get(self.m.mode)):
+        if (vid, pid) != (0x258A, {"app": self.m.app_pid, "bl": self.m.bl_pid}.get(self.m.mode)):
             return []
         cols = [(0, 0xFFFF, self.bl_usage)] if self.m.mode == "bl" else [  # app: hardware.md 2.2
             (0, 0x0001, 0x02), (1, 0x000C, 0x01), (1, 0x0001, 0x80), (1, 0x0001, 0x06), (1, 0xFFA0, 0x01),
@@ -416,11 +423,58 @@ def test_interface_selection(tmp: Path):
         pass
 
 
+def test_receiver_target(tmp: Path):
+    rx_base = hx.RECEIVER_APP_BASE
+    rx_img = make_image(size=0x1000, sp=0x200026E0, reset=rx_base + 0x201)
+    rx_hex = tmp / "rx.hex"
+    rx_hex.write_text(hx.encode_compx_hex(rx_img, rx_base))
+
+    def mk(mode="app", old=rx_img):
+        return MockDevice(
+            mode=mode, old=old, app_pid=0x2031, bl_pid=0x2113,
+            base=rx_base, read_top=0x20000, bank_offset=0, flash_size=0x40000,
+        ).install()
+
+    # probe works read-only in both app (0x81 + 0x89) and bootloader (GetBLFW) modes
+    m = mk(mode="app")
+    assert run(fl.cmd_probe, target="receiver") == 0 and m.mode == "app"
+    m = mk(mode="bl")
+    assert run(fl.cmd_probe, target="receiver") == 0 and m.mode == "bl"
+
+    # flash is unconditionally refused before touching any USB device
+    m = mk(mode="bl")
+    err = run(fl.cmd_flash, target="receiver", firmware_hex=str(rx_hex))
+    assert isinstance(err, RuntimeError) and "Refusing to flash receiver" in str(err) and m.ioctls == 0
+
+    # switching 258a:2031 into 258a:2113 is refused without --allow-receiver-bl
+    m = mk(mode="app")
+    err = run(fl.cmd_dump, target="receiver", out=str(tmp / "no.hex"), start=None, end=None, stay_in_bl=False)
+    assert isinstance(err, RuntimeError) and "--allow-receiver-bl" in str(err) and m.ioctls == 0 and m.mode == "app"
+
+    # with --allow-receiver-bl, read-only dump and verify-bl work and return to 258a:2031
+    m = mk(mode="app")
+    out = tmp / "rx_dump.hex"
+    assert run(fl.cmd_dump, target="receiver", out=str(out), start=None, end=None,
+               stay_in_bl=False, allow_receiver_bl=True) == 0 and m.mode == "app"
+    data, lo, hi, *_ = hx.parse_compx_hex(out)
+    assert (lo, hi) == (rx_base, 0x20000) and data[: len(rx_img)] == rx_img and not m.programs
+
+    m = mk(mode="app")
+    assert run(fl.cmd_verify_bl, target="receiver", reference_hex=str(rx_hex),
+               stay_in_bl=False, allow_receiver_bl=True) == 0 and m.mode == "app"
+
+    # if 258a:2113 is already enumerated, dump/Exit works without --allow-receiver-bl so the user can always exit
+    m = mk(mode="bl")
+    assert run(fl.cmd_dump, target="receiver", out=str(tmp / "rx_exit.hex"), start=rx_base,
+               end=rx_base + 32, stay_in_bl=False, allow_receiver_bl=False) == 0 and m.mode == "app"
+
+
 if __name__ == "__main__":
     test_hex_tool()
     for BACKEND in ("hidraw", "hidapi"):
         with tempfile.TemporaryDirectory() as d:
             test_flasher(Path(d))
+            test_receiver_target(Path(d))
     with tempfile.TemporaryDirectory() as d:
         test_hidapi_selection(Path(d))
     with tempfile.TemporaryDirectory() as d:
