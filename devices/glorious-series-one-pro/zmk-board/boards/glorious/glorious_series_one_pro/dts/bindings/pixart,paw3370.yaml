@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: MIT
+
+description: |
+  PixArt PAW3370 / Glorious BAMF optical mouse sensor (SPI Mode 3, up to 4 MHz).
+  Register protocol and power-up sequence documented in hardware.md section 4.
+
+compatible: "pixart,paw3370"
+
+include: spi-device.yaml
+
+properties:
+  irq-gpios:
+    type: phandle-array
+    required: true
+    description: Active-low MOTION interrupt pin (P0.06 on Glorious Series One Pro).
+
+  cpi:
+    type: int
+    default: 800
+    description: |
+      Initial sensor resolution in counts per inch (50..19000).
+      50..10000 uses 50 CPI steps; 10100..19000 uses 100 CPI steps.
+
+  lod-mm:
+    type: int
+    default: 1
+    enum:
+      - 1
+      - 2
+    description: Lift-off distance in millimetres (1 or 2).
+
+  angle-snap:
+    type: boolean
+    description: Enable hardware angle snapping (register 0x56 = 0x84).
+
+  swap-xy:
+    type: boolean
+    description: Swap X and Y motion axes in software.
+
+  invert-x:
+    type: boolean
+    description: Invert X delta sign in software.
+
+  invert-y:
+    type: boolean
+    description: Invert Y delta sign in software.
+
+  evt-type:
+    type: int
+    default: 2
+    description: Zephyr input event type (default 2 = INPUT_EV_REL).
+
+  x-input-code:
+    type: int
+    default: 0
+    description: Zephyr input code for X axis (default 0 = INPUT_REL_X).
+
+  y-input-code:
+    type: int
+    default: 1
+    description: Zephyr input code for Y axis (default 1 = INPUT_REL_Y).
