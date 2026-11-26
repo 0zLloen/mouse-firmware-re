@@ -11,7 +11,7 @@ Labels follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md#evidence-rules). Firmwar
 | Item | Value | Evidence |
 | :--- | :--- | :--- |
 | Application | `258a:2031`, bcdDevice `0x0100`, product `Series One PRO Wireless`; three HID interfaces with the same report descriptors as the wired mouse (91 / 163 / 20 bytes) | **Verified** (`lsusb -v` and sysfs, 2026-11-12/13) |
-| Bootloader | `258a:2113` | **Inferred** (`FirmwareUpdate.exe` constant and the wireless `Config.ini` `BLPID = 2113`; never seen on USB) |
+| Bootloader | `258a:2113` | **Inferred** (wireless `Config.ini` `BLPID = 2113` and `OldPID = 2113`; never seen on USB; `FirmwareUpdate.exe` is byte-identical to the mouse package and runs the exact same `C52840Dongle` command flow, 2026-11-26) |
 | Official image | `0x00007000`–`0x0000EE03` (32,260 B), 2,020 HEX records, initial SP `0x200026E0`, `Reset_Handler` `0x000074C1` | **Verified** (`compx_hex_tool.py decode --target receiver`, 2026-11-13; SP and `Reset_Handler` are the first two little-endian words of the decoded image) |
 | MCU | nRF52 series with USB. The updater calls it an nRF52840 (`C52840Dongle`, `Config.ini` `ChipName = 00052840`), but the image uses only 32 KB of RAM (stack top `0x200026E0`, magic word at `0x20007FFC`) and no flash above `0x38FFF`, which also fits a 256 KB / 32 KB part such as the nRF52820. The image was not built for an nRF52840: it names no peripheral the nRF52820 lacks, and it has none of the nRF52840 `SystemInit()` errata literals that the mouse image has at `0x6B8C`–`0x6BA0` (NFCT `0x4000568C`, TEMP `0x4000C520`, QSPI `0x40029640`), and no GPIO P1 (section 1.1). | **Inferred**: probably an nRF52820; a photo of the receiver PCB would settle it |
 
@@ -25,6 +25,9 @@ Labels follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md#evidence-rules). Firmwar
   - `2AXP2-DK22` ("Dongle Kit V2", 2405–2476 MHz) is a different board for other mice.
   - Nordic's 2021 press release on another Glorious mouse, the Model O Wireless, names an nRF52840 for the mouse and an nRF52820 for its receiver (<https://www.nordicsemi.com/Nordic-news/2021/10/Glorious-Model-O-Wireless-mouse-and-PC-uses-nRF52840-and-nRF52820>). It does not mention the Series One Pro.
   - No teardown, firmware analysis or protocol notes for `258a:2031` / `258a:2113` were found.
+
+- **Sibling Forge Pro receivers (Verified, 2026-11-26):** the official Model O Pro (`CM2852_Receiver_USB_v1.00.00_20220810.hex`, `258a:2027` / `BLPID 2110`) and Model D Pro (`CM2855_Receiver_USB_v1.00.00_20220810.hex`, `258a:2029` / `BLPID 2112`) receiver images both decode to `32,256 B` at `0x00007000`, are ~98.9 % byte-identical to the Series One Pro receiver image (`32,260 B`, differing in 358 bytes), and use the same `C52840Dongle` updater flow. `GloriousPairingUtility.exe`'s `Config.ini` also lists `[Model Golden Dongle]` (`258a:2032`) as supporting Series One Pro Wireless (`3 = Series One PRO Wireless`).
+- **Offline prep (`compx_usb_flasher.py --target receiver`):** `probe` works read-only against `258a:2031` (`0x81` version + `0x89` link state, Verified 2026-11-26); `flash` is refused until `258a:2113` is characterised; `dump` and `verify-bl` refuse to enter `258a:2113` without `--allow-receiver-bl`.
 
 ## 2. Request routing
 
